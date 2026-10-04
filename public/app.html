@@ -1452,12 +1452,15 @@ async function _gmailLoadMore(silent) {
   }
 }
 
+let _gmailScrollCooldownUntil = 0;
 function _setupEmailListInfiniteScroll() {
   const scrollEl = document.getElementById('el-scroll');
   if (!scrollEl || scrollEl.dataset.infiniteBound) return;
   scrollEl.dataset.infiniteBound = '1';
   scrollEl.addEventListener('scroll', function() {
-    if (scrollEl.scrollTop + scrollEl.clientHeight > scrollEl.scrollHeight - 200) {
+    if (Date.now() < _gmailScrollCooldownUntil) return; // 연속 호출로 인한 깜빡임 방지
+    if (scrollEl.scrollTop + scrollEl.clientHeight > scrollEl.scrollHeight - 300) {
+      _gmailScrollCooldownUntil = Date.now() + 500;
       _gmailLoadMore();
     }
   });

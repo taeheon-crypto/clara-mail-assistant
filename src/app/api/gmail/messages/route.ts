@@ -28,17 +28,32 @@ function findPartByMime(payload: any, mime: string): any {
   return null;
 }
 
+// 일부 메일 시스템(메일플러그 등)은 text/plain 파트에도 HTML 태그/엔티티를 그대로 남겨둠 → 항상 방어적으로 정리
+function stripHtmlAndDecode(s: string): string {
+  return s
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function getPlainBody(payload: any): string {
   const part = findPartByMime(payload, "text/plain");
-  if (part) return decodeB64Url(part.body.data);
+  if (part) {
+    const raw = decodeB64Url(part.body.data);
+    // 실제로 HTML 태그가 섞여 있을 때만 정리(일반 평문 줄바꿈은 보존)
+    return /<[a-z][\s\S]*>/i.test(raw) ? stripHtmlAndDecode(raw) : raw;
+  }
   // text/plain이 없으면 HTML에서 태그만 제거해 미리보기/AI 컨텍스트용으로 사용
   const htmlPart = findPartByMime(payload, "text/html");
   if (htmlPart) {
-    return decodeB64Url(htmlPart.body.data)
-      .replace(/<style[\s\S]*?<\/style>/gi, " ")
-      .replace(/<[^>]+>/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
+    return stripHtmlAndDecode(decodeB64Url(htmlPart.body.data));
   }
   return "";
 }
@@ -129,7 +144,7 @@ export async function GET(req: Request) {
   const pageToken = searchParams.get("pageToken");
 
   const listUrl = new URL("https://gmail.googleapis.com/gmail/v1/users/me/messages");
-  listUrl.searchParams.set("maxResults", "20");
+  listUrl.searchParams.set("maxResults", "30");
   listUrl.searchParams.set("labelIds", "INBOX");
   if (pageToken) listUrl.searchParams.set("pageToken", pageToken);
 
