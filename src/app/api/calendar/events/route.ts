@@ -54,12 +54,21 @@ export async function GET(req: Request) {
       if (!startRaw) continue;
       const startMin = toMinutes(startRaw);
       const endMin = endRaw ? toMinutes(endRaw) : null;
+      const isAllDay = startMin === null;
+      // 종일 일정의 end.date는 Google 규칙상 배타적(다음날 0시)이라 하루 빼서 포함 종료일로 변환
+      let endDateKey = toDateKey(startRaw);
+      if (isAllDay && endRaw) {
+        const endD = new Date(endRaw + "T00:00:00");
+        endD.setDate(endD.getDate() - 1);
+        endDateKey = endD.toISOString().slice(0, 10);
+      }
       events.push({
         id: ev.id,
         calendarId: calId,
         date: toDateKey(startRaw),
+        endDate: isAllDay ? endDateKey : toDateKey(startRaw),
         title: ev.summary || "(제목 없음)",
-        allDay: startMin === null,
+        allDay: isAllDay,
         startMin: startMin ?? 0,
         endMin: endMin ?? (startMin !== null ? startMin + 60 : 24 * 60),
         loc: ev.location || "",

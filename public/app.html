@@ -1102,6 +1102,7 @@ body{display:flex;flex-direction:row;align-items:center;justify-content:center;
           <div class="cal-week-hcell"><div class="cal-week-hday">Fri</div><span class="cal-week-hdate">22</span></div>
           <div class="cal-week-hcell"><div class="cal-week-hday">Sat</div><span class="cal-week-hdate">23</span></div>
         </div>
+        <div id="cal-allday-row" style="display:grid;grid-template-columns:56px repeat(7,1fr);border-bottom:1px solid var(--border-s);flex-shrink:0;background:#fff"></div>
         <div id="cal-week-scroll" style="flex:1;overflow-y:auto;display:flex;background:#fff">
           <div class="cal-time-col" id="cal-time-col">
             <div class="cal-time-slot"><span class="cal-time-label"></span></div>
@@ -6295,7 +6296,8 @@ async function toggleCpMicInt() {
         var cal = _calCalendars.find(function(c){ return c.id === e.calendarId; });
         CAL_EVENTS.push({
           id: e.id, calendarId: e.calendarId,
-          date: e.date, title: e.title,
+          date: e.date, endDate: e.endDate || e.date, title: e.title,
+          allDay: !!e.allDay,
           startMin: e.startMin, endMin: e.endMin,
           time: '', endTime: '',
           loc: e.loc, detail: e.detail,
@@ -6333,6 +6335,59 @@ async function toggleCpMicInt() {
     }
     renderWeek();
     _calLoadReal();
+  }
+
+  // 종일/멀티데이 일정(추석 연휴 같은)을 주간 뷰 상단에 Gantt 스타일 배너로 표시
+  function _calRenderAllDayRow(base) {
+    var container = document.getElementById('cal-allday-row');
+    if (!container) return;
+    function dateKey(d) { return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); }
+    var weekStart = new Date(base); weekStart.setHours(0,0,0,0);
+    var weekEnd = new Date(base); weekEnd.setDate(weekStart.getDate() + 6);
+    var weekStartKey = dateKey(weekStart), weekEndKey = dateKey(weekEnd);
+
+    var items = CAL_EVENTS.filter(function(e) {
+      if (!e.allDay) return false;
+      var ed = e.endDate || e.date;
+      return e.date <= weekEndKey && ed >= weekStartKey;
+    });
+
+    if (!items.length) { container.innerHTML = ''; container.style.display = 'none'; return; }
+    container.style.display = 'grid';
+
+    // 각 이벤트의 주간 내 시작/끝 컬럼(0~6) 계산
+    var spans = items.map(function(e) {
+      var s = e.date < weekStartKey ? 0 : Math.round((new Date(e.date) - weekStart) / 86400000);
+      var en = (e.endDate || e.date) > weekEndKey ? 6 : Math.round((new Date(e.endDate || e.date) - weekStart) / 86400000);
+      return { ev: e, start: Math.max(0, Math.min(6, s)), end: Math.max(0, Math.min(6, en)) };
+    }).sort(function(a, b) { return a.start - b.start || (b.end - b.start) - (a.end - a.start); });
+
+    // 겹치지 않는 이벤트는 같은 행에 배치 (간단한 그리디 패킹)
+    var rows = []; // rows[i] = [{start,end}, ...]
+    spans.forEach(function(sp) {
+      var placed = false;
+      for (var r = 0; r < rows.length; r++) {
+        var overlaps = rows[r].some(function(o) { return sp.start <= o.end && sp.end >= o.start; });
+        if (!overlaps) { rows[r].push(sp); sp.row = r; placed = true; break; }
+      }
+      if (!placed) { rows.push([sp]); sp.row = rows.length - 1; }
+    });
+
+    var ROW_H = 22;
+    container.style.gridTemplateRows = 'repeat(' + rows.length + ', ' + ROW_H + 'px)';
+    container.style.position = 'relative';
+    container.style.minHeight = (rows.length * ROW_H + 6) + 'px';
+    container.innerHTML = '<div></div>' + Array(7).fill('<div></div>').join('');
+
+    spans.forEach(function(sp) {
+      var color = sp.ev.color || TYPE_COLOR[sp.ev.type] || '#6c35de';
+      var bar = document.createElement('div');
+      bar.style.cssText = 'grid-column:' + (sp.start + 2) + ' / ' + (sp.end + 3) + ';grid-row:' + (sp.row + 1) + ';background:' + color + ';color:#fff;font-size:10.5px;font-weight:600;padding:2px 8px;margin:1px 2px;border-radius:4px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;cursor:pointer;align-self:center';
+      bar.textContent = sp.ev.title;
+      bar.title = sp.ev.title;
+      bar.onclick = (function(e2, c2){ return function(e){ e.stopPropagation(); showEventPopup(e2, c2); }; })(sp.ev, bar);
+      container.appendChild(bar);
+    });
   }
 
   function eventsOnDay(y, m, d) {
@@ -6582,7 +6637,7 @@ async function toggleCpMicInt() {
     // 이벤트 칩 — 각 날짜에 해당하는 이벤트를 해당 열에 표시
     for (var ci = 0; ci < 7; ci++) {
       var dayDate = new Date(base); dayDate.setDate(base.getDate() + ci);
-      var evs = eventsOnDay(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate());
+      var evs = eventsOnDay(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate()).filter(function(e){ return !e.allDay; });
       if (!evs.length) continue;
       var colDiv = document.getElementById('wcol-' + ci);
       if (!colDiv) continue;
@@ -6612,13 +6667,14 @@ async function toggleCpMicInt() {
         var chip = document.createElement('div');
         var color = ev.color || TYPE_COLOR[ev.type] || '#6c35de';
         chip.style.cssText = 'position:absolute;left:2px;right:2px;top:'+topPct.toFixed(2)+'%;height:'+heightPct.toFixed(2)+'%;min-height:20px;background:'+color+';color:#fff;font-size:10.5px;font-weight:600;padding:4px 6px;border-radius:4px;z-index:5;cursor:pointer;overflow:hidden;box-sizing:border-box;';
-        chip.innerHTML = '<div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:11px;font-weight:700">' + ev.title + '</div>'
-          + (durMin >= 45 ? '<div style="font-size:10px;opacity:.85;margin-top:1px">' + (ev.time||'') + (ev.endTime ? ' – ' + ev.endTime : '') + '</div>' : '');
+        chip.innerHTML = '<div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:11px;font-weight:700">' + escHtml(ev.title) + '</div>'
+          + (durMin >= 45 ? '<div style="font-size:10px;opacity:.85;margin-top:1px">' + escHtml(ev.time||'') + (ev.endTime ? ' – ' + escHtml(ev.endTime) : '') + '</div>' : '');
         chip.title = ev.title;
         chip.onclick = (function(e2, c2){ return function(e){ e.stopPropagation(); showEventPopup(e2, c2); }; })(ev, chip);
         colDiv.appendChild(chip);
       });
     }
+    _calRenderAllDayRow(base);
     var weekStart = new Date(base);
     var weekEnd = new Date(base); weekEnd.setDate(base.getDate() + 6);
     weekEnd.setHours(23,59,59,999);
