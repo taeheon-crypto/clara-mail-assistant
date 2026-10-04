@@ -6262,13 +6262,22 @@ async function toggleCpMicInt() {
   };
 
   async function _calFetchCalendars() {
+    var container = document.getElementById('mini-cal-list-inner');
     try {
       const res = await fetch('/api/calendar/calendars', { credentials: 'same-origin' });
-      if (!res.ok) return;
+      if (!res.ok) {
+        const errData = await res.json().catch(function(){ return {}; });
+        console.error('calendar list failed', res.status, errData);
+        if (container) container.innerHTML = '<div style="padding:8px;font-size:12px;color:#ef4444">캘린더 로드 실패 (' + res.status + ')' + (errData.detail ? '<br>' + escHtml(String(errData.detail).slice(0,120)) : '') + '</div>';
+        return;
+      }
       const data = await res.json();
       _calCalendars = data.calendars || [];
       _calRenderSidebarList();
-    } catch (err) { console.error('calendar list error', err); }
+    } catch (err) {
+      console.error('calendar list error', err);
+      if (container) container.innerHTML = '<div style="padding:8px;font-size:12px;color:#ef4444">캘린더 로드 오류: ' + escHtml(err.message) + '</div>';
+    }
   }
 
   async function _calFetchEvents() {
