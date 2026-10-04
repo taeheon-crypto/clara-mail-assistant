@@ -31,6 +31,27 @@ function getBody(payload: any): string {
   return "";
 }
 
+function getAttachments(payload: any): { attachmentId: string; name: string; size: string; type: string; mimeType: string }[] {
+  const out: { attachmentId: string; name: string; size: string; type: string; mimeType: string }[] = [];
+  function walk(part: any) {
+    if (!part) return;
+    if (part.filename && part.filename.length > 0 && part.body?.attachmentId) {
+      const sizeBytes = part.body.size || 0;
+      const sizeStr = sizeBytes > 1024 ? `${Math.round(sizeBytes / 1024)}KB` : `${sizeBytes}B`;
+      out.push({
+        attachmentId: part.body.attachmentId,
+        name: part.filename,
+        size: sizeStr,
+        type: (part.mimeType || "").includes("pdf") ? "pdf" : "img",
+        mimeType: part.mimeType || "application/octet-stream",
+      });
+    }
+    if (part.parts) part.parts.forEach(walk);
+  }
+  walk(payload);
+  return out;
+}
+
 export async function GET() {
   const session = await auth();
   if (!session || (session as any).error === "RefreshAccessTokenError") {
@@ -67,6 +88,7 @@ export async function GET() {
     const body = getBody(msg.payload);
     const unread = (msg.labelIds || []).includes("UNREAD");
     const starred = (msg.labelIds || []).includes("STARRED");
+    const attachments = getAttachments(msg.payload);
 
     return {
       id: msg.id,
@@ -77,6 +99,7 @@ export async function GET() {
       date,
       unread,
       starred,
+      attachments,
     };
   });
 
