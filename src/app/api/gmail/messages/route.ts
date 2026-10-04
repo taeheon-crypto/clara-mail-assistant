@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 
+export const maxDuration = 30; // 재시도 여유를 위해 기본 타임아웃보다 넉넉하게
+
 function decodeB64Url(str: string): string {
   try {
     const normalized = str.replace(/-/g, "+").replace(/_/g, "/");
@@ -158,26 +160,29 @@ export async function GET(req: Request) {
   const ids: { id: string }[] = listData.messages || [];
   const nextPageToken: string | null = listData.nextPageToken || null;
 
-  // 한꺼번에 너무 많이 병렬 요청하면 Gmail API 레이트리밋(429)에 걸려 일부 메일이 깨져서 옴 → 작은 배치로 나눠서 순차 처리
+  // 한꺼번에 너무 많이 병렬 요청하면 Gmail API 레이트리밋에 걸려 일부 메일이 누락됨 → 작은 배치 + 넉넉한 재시도로 보완
   async function fetchOne(id: string, attempt = 0): Promise<any | null> {
     const r = await fetch(
       `https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=full`,
       { headers: { Authorization: `Bearer ${accessToken}` } }
     );
     if (r.ok) return r.json();
-    if (r.status === 429 && attempt < 2) {
-      await new Promise((res) => setTimeout(res, 400 * (attempt + 1)));
+    const retryable = r.status === 429 || r.status === 403 || r.status >= 500;
+    if (retryable && attempt < 4) {
+      await new Promise((res) => setTimeout(res, 300 * Math.pow(2, attempt)));
       return fetchOne(id, attempt + 1);
     }
+    console.error(`gmail message fetch failed permanently: ${id} status=${r.status}`);
     return null; // 재시도해도 실패하면 이 메일은 건너뜀 (깨진 행 대신 그냥 제외)
   }
 
-  const BATCH_SIZE = 8;
+  const BATCH_SIZE = 5;
   const messages: any[] = [];
   for (let i = 0; i < ids.length; i += BATCH_SIZE) {
     const batch = ids.slice(i, i + BATCH_SIZE);
     const results = await Promise.all(batch.map((m) => fetchOne(m.id)));
     messages.push(...results);
+    if (i + BATCH_SIZE < ids.length) await new Promise((res) => setTimeout(res, 120));
   }
 
   const emails = messages.filter((msg) => msg && msg.payload).map((msg) => {
