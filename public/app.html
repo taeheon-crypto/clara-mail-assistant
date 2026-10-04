@@ -284,6 +284,7 @@ body{display:flex;flex-direction:row;align-items:center;justify-content:center;
 .em-flag-ico:hover{stroke:#ef4444}
 .em-flag-ico.flagged-on{stroke:#ef4444;fill:#ef4444}
 .em-body{flex:1;min-width:0}
+.em-avatar{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#fff;flex-shrink:0;margin-top:2px}
 .em-sender-row{display:flex;align-items:baseline;justify-content:space-between;gap:6px;margin-bottom:2px}
 /* 읽은 메일 (기본) */
 .em-sender{font-size:12.5px;font-weight:400;color:#555;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -2816,6 +2817,19 @@ function toggleEmailCheck(id, cb) {
 }
 
 
+// Gmail 스타일 아바타: 발신자 이름을 해시해서 항상 같은 사람은 같은 색(이메일 ID가 아니라 '발신자' 기준이라 Gmail처럼 일관됨)
+const _AVATAR_COLORS = ['#4285f4','#ea4335','#34a853','#ff6d00','#7b1fa2','#0097a7','#c62828','#5e35b1','#00897b','#d81b60'];
+function _avatarColor(sender) {
+  let hash = 0;
+  const s = sender || '?';
+  for (let i = 0; i < s.length; i++) hash = (hash * 31 + s.charCodeAt(i)) >>> 0;
+  return _AVATAR_COLORS[hash % _AVATAR_COLORS.length];
+}
+function _avatarInitial(sender) {
+  const s = (sender || '?').trim();
+  return s ? s.charAt(0).toUpperCase() : '?';
+}
+
 function _jsIdLit(v) {
   // id를 onclick="..." (이중따옴표 속성) 안에 안전하게 삽입하기 위한 JS 리터럴 문자열 생성
   if (typeof v === 'number') return String(v);
@@ -2899,6 +2913,7 @@ function renderList() {
         <svg class="em-flag-ico${isPinned?' flagged-on':''}" viewBox="0 0 24 24" stroke="currentColor"
              onclick="event.stopPropagation();listToggleFlag(${idLit})">${flagPath}</svg>
       </div>
+      <div class="em-avatar" style="background:${_avatarColor(e.sender)}">${_avatarInitial(e.sender)}</div>
       <div class="em-body">
         <div class="em-sender-row">
           <span class="em-sender">${highlight(e.sender, q)}</span>
@@ -2984,11 +2999,10 @@ function openEmail(id) {
   document.getElementById('mp-domain').textContent = 'gmail.com';
   // 팝업 닫기
   document.getElementById('meta-popup').classList.remove('show');
-  // 발신자 아바타 (이니셜 + 색상)
-  const colors = ['#4285f4','#ea4335','#34a853','#ff6d00','#7b1fa2','#0097a7','#c62828'];
+  // 발신자 아바타 (이니셜 + 색상) — 목록과 동일하게 발신자 기준으로 일관된 색상
   const av = document.getElementById('g-av');
-  av.textContent = e.sender.charAt(0).toUpperCase();
-  av.style.background = colors[id % colors.length];
+  av.textContent = _avatarInitial(e.sender);
+  av.style.background = _avatarColor(e.sender);
   // Brief
   document.getElementById('ed-body-text').textContent = e.body;
   // Original body — 실제 HTML 메일(bodyHtml)이 있으면 Gmail과 동일한 타이포그래피로 sandboxed iframe에 렌더링
