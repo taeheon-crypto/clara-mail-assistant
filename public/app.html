@@ -2531,16 +2531,27 @@ async function _baAddAiMsg(query) {
   msgs.appendChild(d);
   msgs.scrollTop = msgs.scrollHeight;
 
-  // 우측 Source Table에 떠 있는(=검색으로 매칭된) 상위 이메일들을 실제 컨텍스트로 AI에 넘겨준다
+  // "이번주 메일 몇 개?" 같은 집계/날짜 질문은 키워드 매칭으로는 못 잡으므로,
+  // 현재 불러와진 전체 메일 목록(날짜 포함, 본문 제외 — 가벼움)을 항상 같이 넘긴다.
+  var now = new Date();
+  var todayStr = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0');
+  var allMailList = (EMAILS || []).map(function(e) {
+    return e.date + ' | ' + (e.sender || '') + ' | ' + (e.subject || '');
+  }).join('\n');
+
+  // 우측 Source Table에 떠 있는(=검색으로 매칭된) 상위 이메일들은 본문까지 상세히 추가로 넘긴다
   var topSources = (_baRenderedSources || []).slice(0, 6).map(function(s) {
     var e = s.email || s;
     return '[' + (e.sender || '') + '] ' + (e.subject || '') + '\n' + (e.body || e.original || '').slice(0, 400);
   }).join('\n\n---\n\n');
 
   var sys = 'You are Clara, an AI assistant that answers questions about the user\'s email inbox. '
-    + 'Below are the emails most relevant to the user\'s question (already matched by keyword search). '
-    + 'Answer concisely and specifically using this context. If the context doesn\'t contain the answer, say so honestly. Respond in Korean.'
-    + (topSources ? ('\n\n관련 이메일:\n' + topSources) : '\n\n(검색된 관련 이메일 없음)');
+    + 'Today\'s date is ' + todayStr + '. Email dates below are in MM/DD format (current year). '
+    + 'For counting/date-range/listing questions, use the full mail list below (every email currently loaded, ' + EMAILS.length + ' total — note: if the inbox has more mail than what\'s loaded, this list may be a partial recent subset). '
+    + 'For questions about specific content, use the detailed excerpts (matched by keyword search). '
+    + 'Answer concisely and specifically. If the context doesn\'t contain the answer, say so honestly. Respond in Korean.'
+    + '\n\n전체 메일 목록 (날짜 | 발신자 | 제목):\n' + (allMailList || '(없음)')
+    + (topSources ? ('\n\n키워드 관련 상세 본문:\n' + topSources) : '');
 
   _baChatHistory.push({ role: 'user', content: query });
 
