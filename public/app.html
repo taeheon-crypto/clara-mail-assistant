@@ -1381,8 +1381,15 @@ async function _gmailFetchMessages() {
     showToast('Gmail 메일 로딩 중...');
     const res = await fetch('/api/gmail/messages', { credentials: 'same-origin' });
     if (res.status === 401) { _gmailConnect(); return; }
-    if (!res.ok) throw new Error('status ' + res.status);
-    const data = await res.json();
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      if (data.error === 'quota_exceeded') {
+        showToast('⚠ Gmail 요청이 일시적으로 많아 잠시 제한됐습니다. 1분 후 자동으로 다시 시도합니다.');
+        setTimeout(_gmailFetchMessages, 60000);
+        return;
+      }
+      throw new Error('status ' + res.status);
+    }
     const list = data.emails || [];
     _gmailNextPageToken = data.nextPageToken || null;
     if (!list.length) { showToast('받은편지함이 비어있습니다.'); _gmailConnected = true; _updateGmailBtn(); return; }
@@ -1396,7 +1403,11 @@ async function _gmailFetchMessages() {
     _gmailConnected = true;
     _updateGmailBtn();
     showToast('✓ Gmail 연동 완료 — ' + newEmails.length + '개 메일');
-    _gmailPrefetchAll(); // 스크롤하기 전에 미리 백그라운드로 더 받아둬서 스크롤 중 로딩 끊김을 없앰
+    if (data.quotaExceeded) {
+      showToast('⚠ Gmail 요청 한도로 일부 메일만 불러왔습니다. 스크롤하면 나중에 이어서 불러옵니다.');
+    } else {
+      setTimeout(_gmailPrefetchAll, 2000); // 초기 로드 직후 바로 또 몰아치지 않도록 약간의 텀을 둠
+    }
   } catch (err) {
     console.error('Gmail fetch error:', err);
     showToast('Gmail 로드 실패: ' + err.message);
@@ -1404,7 +1415,7 @@ async function _gmailFetchMessages() {
 }
 
 // 사용자가 스크롤로 체감하기 전에 조용히 미리 받아두는 백그라운드 프리페치 (적당한 선까지만 — 수천 통을 다 끌어오진 않음)
-const _GMAIL_PRELOAD_CAP = 100;
+const _GMAIL_PRELOAD_CAP = 40; // Gmail API 분당 할당량 보호를 위해 과도한 선제 로딩을 줄임
 async function _gmailPrefetchAll() {
   while (_gmailNextPageToken && EMAILS.length < _GMAIL_PRELOAD_CAP) {
     const ok = await _gmailLoadMore(true /* silent */);
@@ -1427,7 +1438,14 @@ async function _gmailLoadMore(silent) {
   }
   try {
     const res = await fetch('/api/gmail/messages?pageToken=' + encodeURIComponent(_gmailNextPageToken), { credentials: 'same-origin' });
-    if (!res.ok) return false;
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      if (errData.error === 'quota_exceeded') {
+        showToast('⚠ Gmail 요청 한도에 도달했습니다. 잠시 후 다시 스크롤해주세요.');
+        _gmailScrollCooldownUntil = Date.now() + 30000; // 할당량 초과 시 30초간 추가 요청 안 함
+      }
+      return false;
+    }
     const data = await res.json();
     const list = data.emails || [];
     _gmailNextPageToken = data.nextPageToken || null;
