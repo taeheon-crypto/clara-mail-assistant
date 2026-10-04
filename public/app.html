@@ -1403,33 +1403,48 @@ async function _gmailFetchMessages() {
     _gmailConnected = true;
     _updateGmailBtn();
     showToast('✓ Gmail 연동 완료 — ' + newEmails.length + '개 메일');
+    _gmailPrefetchAll(); // 스크롤하기 전에 미리 백그라운드로 더 받아둬서 스크롤 중 로딩 끊김을 없앰
   } catch (err) {
     console.error('Gmail fetch error:', err);
     showToast('Gmail 로드 실패: ' + err.message);
   }
 }
 
-// 목록을 스크롤로 끝까지 내리면 이전(더 오래된) 메일을 이어서 불러옴
-async function _gmailLoadMore() {
+// 사용자가 스크롤로 체감하기 전에 조용히 미리 받아두는 백그라운드 프리페치 (적당한 선까지만 — 수천 통을 다 끌어오진 않음)
+const _GMAIL_PRELOAD_CAP = 100;
+async function _gmailPrefetchAll() {
+  while (_gmailNextPageToken && EMAILS.length < _GMAIL_PRELOAD_CAP) {
+    const ok = await _gmailLoadMore(true /* silent */);
+    if (!ok) break; // 실패하면 무한 재시도 방지 위해 중단 (스크롤 시 다시 시도됨)
+  }
+}
+
+// 이전(더 오래된) 메일을 이어서 불러옴 — silent=true면 로딩 표시 없이 조용히(프리페치용)
+async function _gmailLoadMore(silent) {
   if (_gmailLoadingMore || !_gmailNextPageToken) return;
   _gmailLoadingMore = true;
   const scrollEl = document.getElementById('el-scroll');
-  const loadingRow = document.createElement('div');
-  loadingRow.id = 'el-load-more-row';
-  loadingRow.style.cssText = 'padding:14px;text-align:center;color:#9ca3af;font-size:12px';
-  loadingRow.textContent = '이전 메일 불러오는 중...';
-  if (scrollEl) scrollEl.appendChild(loadingRow);
+  let loadingRow = null;
+  if (!silent) {
+    loadingRow = document.createElement('div');
+    loadingRow.id = 'el-load-more-row';
+    loadingRow.style.cssText = 'padding:14px;text-align:center;color:#9ca3af;font-size:12px';
+    loadingRow.textContent = '이전 메일 불러오는 중...';
+    if (scrollEl) scrollEl.appendChild(loadingRow);
+  }
   try {
     const res = await fetch('/api/gmail/messages?pageToken=' + encodeURIComponent(_gmailNextPageToken), { credentials: 'same-origin' });
-    if (!res.ok) return;
+    if (!res.ok) return false;
     const data = await res.json();
     const list = data.emails || [];
     _gmailNextPageToken = data.nextPageToken || null;
     const existingIds = new Set(EMAILS.map(e => e.id));
     list.map(_mapGmailEmail).forEach(e => { if (!existingIds.has(e.id)) EMAILS.push(e); });
     renderList();
+    return true;
   } catch (err) {
     console.error('Gmail load-more error:', err);
+    return false;
   } finally {
     _gmailLoadingMore = false;
     const stuckRow = document.getElementById('el-load-more-row');
