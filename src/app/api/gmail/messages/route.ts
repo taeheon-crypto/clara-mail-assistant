@@ -118,22 +118,30 @@ function getAttachments(payload: any): { attachmentId: string; name: string; siz
   return out;
 }
 
-export async function GET() {
+export async function GET(req: Request) {
   const session = await auth();
   if (!session || (session as any).error === "RefreshAccessTokenError") {
     return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
   }
   const accessToken = (session as any).accessToken as string;
 
-  const listRes = await fetch(
-    "https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=30&labelIds=INBOX",
-    { headers: { Authorization: `Bearer ${accessToken}` } }
-  );
+  const { searchParams } = new URL(req.url);
+  const pageToken = searchParams.get("pageToken");
+
+  const listUrl = new URL("https://gmail.googleapis.com/gmail/v1/users/me/messages");
+  listUrl.searchParams.set("maxResults", "20");
+  listUrl.searchParams.set("labelIds", "INBOX");
+  if (pageToken) listUrl.searchParams.set("pageToken", pageToken);
+
+  const listRes = await fetch(listUrl.toString(), {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
   if (!listRes.ok) {
     return NextResponse.json({ error: "gmail_list_failed" }, { status: listRes.status });
   }
   const listData = await listRes.json();
   const ids: { id: string }[] = listData.messages || [];
+  const nextPageToken: string | null = listData.nextPageToken || null;
 
   const messages = await Promise.all(
     ids.map(async (m) => {
@@ -173,5 +181,5 @@ export async function GET() {
     };
   });
 
-  return NextResponse.json({ emails });
+  return NextResponse.json({ emails, nextPageToken });
 }

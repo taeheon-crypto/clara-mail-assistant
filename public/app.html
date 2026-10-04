@@ -1358,6 +1358,26 @@ function _gmailShortDate(dateStr) {
   catch(e) { return ''; }
 }
 
+let _gmailNextPageToken = null;
+let _gmailLoadingMore = false;
+
+function _mapGmailEmail(e) {
+  return {
+    id: 'g_' + e.id, gmailId: e.id,
+    sender: e.sender, icon: _gmailIcon(e.sender),
+    unread: e.unread, starred: e.starred,
+    subject: e.subject, preview: e.preview,
+    date: _gmailShortDate(e.date), body: e.body,
+    bodyHtml: e.bodyHtml || null,
+    original: e.sender + '\n\n' + e.body,
+    label: 'inbox', project: '받은편지함', pDesc: e.subject.slice(0, 50),
+    attachments: (e.attachments || []).map(a => ({
+      name: a.name, size: a.size, type: a.type,
+      gmailId: e.id, attachmentId: a.attachmentId, mimeType: a.mimeType
+    }))
+  };
+}
+
 async function _gmailFetchMessages() {
   try {
     showToast('Gmail 메일 로딩 중...');
@@ -1366,26 +1386,14 @@ async function _gmailFetchMessages() {
     if (!res.ok) throw new Error('status ' + res.status);
     const data = await res.json();
     const list = data.emails || [];
+    _gmailNextPageToken = data.nextPageToken || null;
     if (!list.length) { showToast('받은편지함이 비어있습니다.'); _gmailConnected = true; _updateGmailBtn(); return; }
 
-    const newEmails = list.map(e => ({
-      id: 'g_' + e.id, gmailId: e.id,
-      sender: e.sender, icon: _gmailIcon(e.sender),
-      unread: e.unread, starred: e.starred,
-      subject: e.subject, preview: e.preview,
-      date: _gmailShortDate(e.date), body: e.body,
-      bodyHtml: e.bodyHtml || null,
-      original: e.sender + '\n\n' + e.body,
-      label: 'inbox', project: '받은편지함', pDesc: e.subject.slice(0, 50),
-      attachments: (e.attachments || []).map(a => ({
-        name: a.name, size: a.size, type: a.type,
-        gmailId: e.id, attachmentId: a.attachmentId, mimeType: a.mimeType
-      }))
-    }));
-
+    const newEmails = list.map(_mapGmailEmail);
     EMAILS.length = 0;
     newEmails.forEach(e => EMAILS.push(e));
     renderList();
+    _setupEmailListInfiniteScroll();
     selId = null;
     _gmailConnected = true;
     _updateGmailBtn();
@@ -1394,6 +1402,45 @@ async function _gmailFetchMessages() {
     console.error('Gmail fetch error:', err);
     showToast('Gmail 로드 실패: ' + err.message);
   }
+}
+
+// 목록을 스크롤로 끝까지 내리면 이전(더 오래된) 메일을 이어서 불러옴
+async function _gmailLoadMore() {
+  if (_gmailLoadingMore || !_gmailNextPageToken) return;
+  _gmailLoadingMore = true;
+  const scrollEl = document.getElementById('el-scroll');
+  const loadingRow = document.createElement('div');
+  loadingRow.id = 'el-load-more-row';
+  loadingRow.style.cssText = 'padding:14px;text-align:center;color:#9ca3af;font-size:12px';
+  loadingRow.textContent = '이전 메일 불러오는 중...';
+  if (scrollEl) scrollEl.appendChild(loadingRow);
+  try {
+    const res = await fetch('/api/gmail/messages?pageToken=' + encodeURIComponent(_gmailNextPageToken), { credentials: 'same-origin' });
+    if (!res.ok) return;
+    const data = await res.json();
+    const list = data.emails || [];
+    _gmailNextPageToken = data.nextPageToken || null;
+    const existingIds = new Set(EMAILS.map(e => e.id));
+    list.map(_mapGmailEmail).forEach(e => { if (!existingIds.has(e.id)) EMAILS.push(e); });
+    renderList();
+  } catch (err) {
+    console.error('Gmail load-more error:', err);
+  } finally {
+    _gmailLoadingMore = false;
+    const stuckRow = document.getElementById('el-load-more-row');
+    if (stuckRow) stuckRow.remove();
+  }
+}
+
+function _setupEmailListInfiniteScroll() {
+  const scrollEl = document.getElementById('el-scroll');
+  if (!scrollEl || scrollEl.dataset.infiniteBound) return;
+  scrollEl.dataset.infiniteBound = '1';
+  scrollEl.addEventListener('scroll', function() {
+    if (scrollEl.scrollTop + scrollEl.clientHeight > scrollEl.scrollHeight - 200) {
+      _gmailLoadMore();
+    }
+  });
 }
 
 function _gmailConnect() {
@@ -2913,7 +2960,6 @@ function renderList() {
         <svg class="em-flag-ico${isPinned?' flagged-on':''}" viewBox="0 0 24 24" stroke="currentColor"
              onclick="event.stopPropagation();listToggleFlag(${idLit})">${flagPath}</svg>
       </div>
-      <div class="em-avatar" style="background:${_avatarColor(e.sender)}">${_avatarInitial(e.sender)}</div>
       <div class="em-body">
         <div class="em-sender-row">
           <span class="em-sender">${highlight(e.sender, q)}</span>
