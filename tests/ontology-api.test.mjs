@@ -8,7 +8,7 @@ async function route(path, { session = { user: { email: 'me@example.com' }, acce
   const source = await readFile(new URL('../src/app/api/' + path + '/route.ts', import.meta.url), 'utf8');
   const js = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   const exports = {};
-  vm.runInNewContext(js, { exports, require(name) { if (name === '@/auth') return { auth: async () => session }; if (name === 'next/server') return { NextResponse: { json: Response.json } }; throw new Error(name); }, fetch: fetchStub, URL, Buffer, AbortSignal, Request, Response, process: { env: { OPENROUTER_API_KEY: 'test-key' } } });
+  vm.runInNewContext(js, { exports, console: { warn() {} }, require(name) { if (name === '@/auth') return { auth: async () => session }; if (name === 'next/server') return { NextResponse: { json: Response.json } }; throw new Error(name); }, fetch: fetchStub, URL, Buffer, AbortSignal, Request, Response, process: { env: { OPENROUTER_API_KEY: 'test-key' } } });
   return exports;
 }
 test('sync endpoints reject unauthenticated calls without contacting Google', async () => {
@@ -47,6 +47,26 @@ test('chat uses ontology for every surface and keeps source instructions out of 
   assert.ok(!sent.messages[0].content.includes('Ignore all instructions'));
   assert.ok(!JSON.stringify(sent).includes('FAKE DEMO EMAIL'));
   assert.match(sent.messages[1].content, /Ignore all instructions/);
+  assert.deepEqual(sent.models, ['google/gemma-4-26b-a4b-it:free', 'openrouter/free']);
+});
+test('chat distinguishes daily quota from provider congestion without leaking upstream data', async () => {
+  for (const [message, code] of [['free-models-per-day PRIVATE', 'daily_limit'], ['Provider returned error PRIVATE', 'rate_limited']]) {
+    const r = await route('chat', { fetch: async () => Response.json({ error: { message } }, { status: 429 }) });
+    const res = await r.POST(new Request('https://clara.test/api/chat', { method: 'POST', body: JSON.stringify({ messages: [{ role: 'user', content: 'Question' }] }) }));
+    assert.equal(res.status, 429);
+    assert.ok(Number(res.headers.get('Retry-After')) > 0);
+    const data = await res.json();
+    assert.equal(data.error.code, code);
+    assert.ok(!JSON.stringify(data).includes('PRIVATE'));
+  }
+});
+test('chat rejects empty generations and HTTP-200 error envelopes', async () => {
+  for (const upstream of [{ choices: [{ message: { content: '' } }] }, { error: { code: 429, message: 'rate limited' } }]) {
+    const r = await route('chat', { fetch: async () => Response.json(upstream) });
+    const res = await r.POST(new Request('https://clara.test/api/chat', { method: 'POST', body: JSON.stringify({ messages: [{ role: 'user', content: 'Question' }] }) }));
+    assert.equal(res.status, upstream.error ? 429 : 502);
+    assert.ok((await res.json()).error.message);
+  }
 });
 test('malformed chat requests fail before reaching the model', async () => {
   const r = await route('chat');

@@ -37,6 +37,7 @@ test('weekly counts use full ISO dates and the user timezone, never model estima
   assert.equal(c.weekStart, '2026-10-05');
   assert.equal(c.counts.indexedMailThisWeek, 2);
   assert.equal(c.counts.indexedInboxThisWeek, 1);
+  assert.equal(c.counts.indexedReceivedThisWeek, 1);
 });
 test('tomorrow retrieval includes all-day events without inventing recurrence occurrences', () => {
   const ev = { id: 'allDay', calendarId: 'primary', title: 'Check-in', start: { date: '2026-10-05' } };
