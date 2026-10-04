@@ -154,7 +154,9 @@ export async function GET(req: Request) {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
   if (!listRes.ok) {
-    return NextResponse.json({ error: "gmail_list_failed" }, { status: listRes.status });
+    const bodyText = await listRes.text().catch(() => "");
+    console.error(`gmail list failed status=${listRes.status} body=${bodyText.slice(0, 400)}`);
+    return NextResponse.json({ error: "gmail_list_failed", detail: bodyText.slice(0, 300) }, { status: listRes.status });
   }
   const listData = await listRes.json();
   const ids: { id: string }[] = listData.messages || [];
@@ -172,7 +174,8 @@ export async function GET(req: Request) {
       await new Promise((res) => setTimeout(res, 300 * Math.pow(2, attempt)));
       return fetchOne(id, attempt + 1);
     }
-    console.error(`gmail message fetch failed permanently: ${id} status=${r.status}`);
+    const bodyText = await r.text().catch(() => "");
+    console.error(`gmail message fetch failed permanently: ${id} status=${r.status} body=${bodyText.slice(0, 400)}`);
     return null; // 재시도해도 실패하면 이 메일은 건너뜀 (깨진 행 대신 그냥 제외)
   }
 
