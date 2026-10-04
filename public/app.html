@@ -1282,7 +1282,7 @@ body{display:flex;flex-direction:row;align-items:center;justify-content:center;
                 <div class="inline-compose-hdr">
                   <svg viewBox="0 0 24 24" stroke="currentColor" id="inline-compose-icon" style="width:13px;height:13px;stroke:var(--fg-s);flex-shrink:0"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg>
                   <span id="inline-compose-label" style="font-size:12.5px;font-weight:600;color:var(--fg)">답장</span>
-                  <span id="inline-compose-to" style="font-size:12.5px;color:var(--fg-m);margin-left:4px"></span>
+                  <input id="inline-compose-to" type="email" placeholder="받는사람 이메일" style="font-size:12.5px;color:var(--fg-m);margin-left:4px;border:none;outline:none;background:transparent;font-family:inherit;min-width:160px" />
                   <div style="flex:1"></div>
                   <button class="g-ico-btn" title="최소화" onclick="minimizeInlineCompose()" style="width:26px;height:26px"><svg viewBox="0 0 24 24" stroke="currentColor"><path d="M5 12h14"/></svg></button>
                   <button class="g-ico-btn" title="전체화면" id="inline-compose-expand-btn" onclick="toggleInlineComposeFull()" style="width:26px;height:26px"><svg viewBox="0 0 24 24" stroke="currentColor"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg></button>
@@ -1359,6 +1359,8 @@ let _gmailLoadingMore = false;
 function _mapGmailEmail(e) {
   return {
     id: 'g_' + e.id, gmailId: e.id,
+    gmailThreadId: e.threadId, senderEmail: e.senderEmail || '',
+    messageIdHeader: e.messageIdHeader || '', referencesHeader: e.referencesHeader || '',
     sender: e.sender, icon: _gmailIcon(e.sender),
     unread: e.unread, starred: e.starred,
     subject: e.subject, preview: e.preview,
@@ -5532,7 +5534,7 @@ function openInlineReply() {
   const e = selId !== null ? EMAILS.find(x => x.id === selId) : null;
   _inlineMode = 'reply';
   document.getElementById('inline-compose-label').textContent = '답장';
-  document.getElementById('inline-compose-to').textContent = e ? e.sender : '';
+  document.getElementById('inline-compose-to').value = e ? (e.senderEmail || e.sender || '') : '';
   document.getElementById('inline-compose-icon').innerHTML = '<polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/>';
   document.getElementById('inline-compose-body').innerHTML = '';
   document.getElementById('inline-compose').classList.add('visible');
@@ -5540,14 +5542,13 @@ function openInlineReply() {
 }
 
 function openInlineForward() {
-  const e = selId !== null ? EMAILS.find(x => x.id === selId) : null;
   _inlineMode = 'forward';
   document.getElementById('inline-compose-label').textContent = '전달';
-  document.getElementById('inline-compose-to').textContent = e ? e.sender : '';
+  document.getElementById('inline-compose-to').value = '';
   document.getElementById('inline-compose-icon').innerHTML = '<polyline points="15 17 20 12 15 7"/><path d="M4 18v-2a4 4 0 0 1 4-4h12"/>';
   document.getElementById('inline-compose-body').innerHTML = '';
   document.getElementById('inline-compose').classList.add('visible');
-  setTimeout(() => document.getElementById('inline-compose-body').focus(), 50);
+  setTimeout(() => document.getElementById('inline-compose-to').focus(), 50);
 }
 
 function minimizeInlineCompose() {
@@ -5557,11 +5558,11 @@ function minimizeInlineCompose() {
   // 현재 상태 저장
   const barId = 'ic-' + Date.now();
   const mode = _inlineMode || 'reply';
-  const toText = document.getElementById('inline-compose-to')?.textContent?.trim() || '';
+  const toText = document.getElementById('inline-compose-to')?.value?.trim() || '';
   const modeLabel = mode === 'forward' ? '전달' : '답장';
   const label = toText ? `Re: ${toText}` : modeLabel;
   const savedBody = document.getElementById('inline-compose-body')?.innerHTML || '';
-  const savedTo = document.getElementById('inline-compose-to')?.textContent || '';
+  const savedTo = document.getElementById('inline-compose-to')?.value || '';
   const savedIcon = document.getElementById('inline-compose-icon')?.innerHTML || '';
 
   _savedComposes[barId] = { mode, label, body: savedBody, to: savedTo, icon: savedIcon };
@@ -5577,7 +5578,7 @@ function minimizeInlineCompose() {
       const saved = _savedComposes[barId];
       if (!saved) return;
       document.getElementById('inline-compose-label').textContent = saved.mode === 'forward' ? '전달' : '답장';
-      document.getElementById('inline-compose-to').textContent = saved.to;
+      document.getElementById('inline-compose-to').value = saved.to;
       document.getElementById('inline-compose-icon').innerHTML = saved.icon;
       document.getElementById('inline-compose-body').innerHTML = saved.body;
       _inlineMode = saved.mode;
@@ -5628,11 +5629,65 @@ function closeInlineCompose() {
   _inlineMode = null;
 }
 
-function sendInlineCompose() {
-  closeInlineCompose();
-  // 전송 토스트
-  const t = document.getElementById('send-toast');
-  if (t) { t.classList.add('show'); setTimeout(()=>t.classList.remove('show'), 3000); }
+async function sendInlineCompose() {
+  const toInput = document.getElementById('inline-compose-to');
+  const bodyEl = document.getElementById('inline-compose-body');
+  const sendBtn = document.querySelector('#inline-compose .compose-send-pill');
+  const to = (toInput?.value || '').trim();
+  const typedBody = (bodyEl?.innerText || '').trim();
+
+  if (!to) { showToast('받는 사람을 입력하세요.'); toInput?.focus(); return; }
+  if (!typedBody) { showToast('내용을 입력하세요.'); bodyEl?.focus(); return; }
+
+  const e = selId !== null ? EMAILS.find(x => x.id === selId) : null;
+  const mode = _inlineMode || 'reply';
+  const origSubject = e ? e.subject : '';
+  let subject;
+  if (mode === 'forward') {
+    subject = /^fwd:/i.test(origSubject) ? origSubject : 'Fwd: ' + origSubject;
+  } else {
+    subject = /^re:/i.test(origSubject) ? origSubject : 'Re: ' + origSubject;
+  }
+
+  let bodyText = typedBody;
+  if (mode === 'forward' && e) {
+    bodyText += '\n\n---------- Forwarded message ----------\n'
+      + 'From: ' + (e.senderEmail || e.sender) + '\n'
+      + 'Subject: ' + origSubject + '\n\n'
+      + (e.body || '');
+  }
+
+  const payload = { to, subject, bodyText };
+  if (mode === 'reply' && e && e.gmailThreadId) {
+    payload.threadId = e.gmailThreadId;
+    if (e.messageIdHeader) {
+      payload.inReplyTo = e.messageIdHeader;
+      payload.references = e.referencesHeader ? (e.referencesHeader + ' ' + e.messageIdHeader) : e.messageIdHeader;
+    }
+  }
+
+  if (sendBtn) { sendBtn.disabled = true; sendBtn.style.opacity = '.6'; }
+  try {
+    const res = await fetch('/api/gmail/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      showToast('전송 실패: ' + (data.error || res.status));
+      return;
+    }
+    closeInlineCompose();
+    const t = document.getElementById('send-toast');
+    if (t) { t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 3000); }
+  } catch (err) {
+    console.error('send error', err);
+    showToast('전송 실패: ' + err.message);
+  } finally {
+    if (sendBtn) { sendBtn.disabled = false; sendBtn.style.opacity = ''; }
+  }
 }
 
 function openComposePopupFromInline() {

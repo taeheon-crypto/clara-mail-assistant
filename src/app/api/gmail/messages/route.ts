@@ -186,6 +186,10 @@ export async function GET(req: Request) {
     const from = getHeader(headers, "From");
     const date = getHeader(headers, "Date");
     const sender = from.replace(/<[^>]+>/g, "").replace(/"/g, "").trim() || from;
+    const senderEmailMatch = from.match(/<([^>]+)>/);
+    const senderEmail = senderEmailMatch ? senderEmailMatch[1] : from.trim();
+    const messageIdHeader = getHeader(headers, "Message-ID");
+    const referencesHeader = getHeader(headers, "References");
     const body = getPlainBody(msg.payload);
     const rawHtml = getRawHtmlBody(msg.payload);
     const inlineImages = rawHtml ? getInlineImages(msg.payload) : [];
@@ -196,7 +200,11 @@ export async function GET(req: Request) {
 
     return {
       id: msg.id,
+      threadId: msg.threadId,
       sender,
+      senderEmail,
+      messageIdHeader,
+      referencesHeader,
       subject,
       preview: body.slice(0, 140),
       body,
