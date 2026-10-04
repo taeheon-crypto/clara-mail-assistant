@@ -5676,7 +5676,8 @@ async function sendInlineCompose() {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      showToast('전송 실패: ' + (data.error || res.status));
+      console.error('send failed detail:', data);
+      showToast('전송 실패: ' + (data.detail || data.error || res.status));
       return;
     }
     closeInlineCompose();

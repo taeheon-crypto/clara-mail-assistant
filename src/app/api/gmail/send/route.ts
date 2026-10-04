@@ -13,6 +13,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
   }
   const accessToken = (session as any).accessToken as string;
+  const fromEmail = (session as any).user?.email as string | undefined;
 
   const { to, subject, bodyText, threadId, inReplyTo, references } = await req.json();
   if (!to || !String(to).trim()) {
@@ -23,6 +24,7 @@ export async function POST(req: Request) {
   }
 
   const headerLines = [
+    ...(fromEmail ? [`From: ${fromEmail}`] : []),
     `To: ${to}`,
     `Subject: ${encodeSubject(subject || "")}`,
     `Content-Type: text/plain; charset="UTF-8"`,
