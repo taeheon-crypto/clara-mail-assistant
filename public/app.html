@@ -505,7 +505,7 @@ body{display:flex;flex-direction:row;align-items:center;justify-content:center;
 .orig-meta-label{color:var(--fg-s);width:36px;flex-shrink:0;font-weight:600}
 .orig-meta-val{color:var(--fg);font-weight:500}
 .orig-divider{height:1px;background:var(--border-s);margin:14px 0}
-.orig-body{font-size:13.5px;line-height:1.85;color:var(--fg);white-space:pre-line}
+.orig-body{font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.5;color:#202124;white-space:pre-line}
 
 /* suggest */
 .sg-body{flex:1;overflow-y:auto;padding:12px 14px;display:flex;flex-direction:column;gap:10px}
@@ -1373,6 +1373,7 @@ async function _gmailFetchMessages() {
       unread: e.unread, starred: e.starred,
       subject: e.subject, preview: e.preview,
       date: _gmailShortDate(e.date), body: e.body,
+      bodyHtml: e.bodyHtml || null,
       original: e.sender + '\n\n' + e.body,
       label: 'inbox', project: '받은편지함', pDesc: e.subject.slice(0, 50),
       attachments: (e.attachments || []).map(a => ({
@@ -2907,6 +2908,42 @@ function renderList() {
   }).join('');
 }
 
+// 실제 HTML 이메일은 sandboxed iframe에 렌더링 (Gmail과 동일한 방식 — 메일 CSS가 앱에 새지 않도록 격리)
+function renderEmailBody(e) {
+  const container = document.getElementById('ed-original-content');
+  container.innerHTML = '';
+  if (e.bodyHtml) {
+    const iframe = document.createElement('iframe');
+    iframe.setAttribute('sandbox', 'allow-popups allow-popups-to-escape-sandbox');
+    iframe.style.cssText = 'width:100%;border:none;display:block;min-height:40px';
+    container.appendChild(iframe);
+    const gmailCss = '<style>'
+      + 'html,body{margin:0;padding:0}'
+      + 'body{font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.5;color:#202124;word-wrap:break-word;overflow-wrap:break-word}'
+      + 'img{max-width:100%;height:auto}'
+      + 'a{color:#1a73e8}'
+      + 'table{max-width:100%}'
+      + 'blockquote{margin:0 0 0 .8ex;border-left:1px solid #ccc;padding-left:1ex;color:#5f6368}'
+      + '</style>';
+    iframe.srcdoc = gmailCss + e.bodyHtml;
+    iframe.onload = function() {
+      try {
+        const doc = iframe.contentWindow.document;
+        const resize = function() { iframe.style.height = (doc.documentElement.scrollHeight + 16) + 'px'; };
+        resize();
+        doc.querySelectorAll('img').forEach(function(img) { img.addEventListener('load', resize); });
+        setTimeout(resize, 300);
+        doc.querySelectorAll('a').forEach(function(a) { a.setAttribute('target', '_blank'); a.setAttribute('rel', 'noopener noreferrer'); });
+      } catch (err) { /* 샌드박스 보호로 접근 제한될 수 있음 — 무시 */ }
+    };
+  } else {
+    const origBody = e.original ? e.original : e.body;
+    container.innerHTML = origBody
+      .replace(/\n/g, '<br>')
+      .replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" style="color:#1a73e8;text-decoration:none">$1</a>');
+  }
+}
+
 function openEmail(id) {
   selId = id;
   // ed-wrapper 표시
@@ -2946,11 +2983,8 @@ function openEmail(id) {
   av.style.background = colors[id % colors.length];
   // Brief
   document.getElementById('ed-body-text').textContent = e.body;
-  // Original body
-  const origBody = e.original ? e.original : e.body;
-  document.getElementById('ed-original-content').innerHTML = origBody
-    .replace(/\n/g, '<br>')
-    .replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" style="color:#1a73e8;text-decoration:none">$1</a>');
+  // Original body — 실제 HTML 메일(bodyHtml)이 있으면 Gmail과 동일한 타이포그래피로 sandboxed iframe에 렌더링
+  renderEmailBody(e);
   // suggest
   document.getElementById('sg-body').innerHTML = `
     <div class="sg-card">
