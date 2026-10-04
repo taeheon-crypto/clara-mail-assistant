@@ -2062,6 +2062,7 @@ function refreshAiMode() {
 var _aiMode = false;
 var _aiTransGen = 0; // 빠른 연속 전환 시 오래된 setTimeout 콜백이 새 상태를 덮어쓰는 걸 막기 위한 세대 카운터
 function toggleAiMode() {
+  var myGen = ++_aiTransGen;
   // page-projects는 absolute overlay이므로 별도 복구 불필요
   // page-projects 비활성화, page-inbox 활성화
   var _ppAi = document.getElementById('page-projects');
@@ -2088,6 +2089,7 @@ function toggleAiMode() {
     if (elCal) { elCal.style.display = ''; elCal.style.transition = 'none'; elCal.style.maxWidth = '0'; elCal.style.minWidth = '0'; elCal.style.opacity = '0'; }
     if (edWrCal) { edWrCal.style.display = ''; edWrCal.style.transition = 'none'; edWrCal.style.opacity = '0'; edWrCal.style.transform = ''; }
     setTimeout(function(){
+      if (myGen !== _aiTransGen) return; // 대기 중 다른 전환이 시작됐으면 AI 모드 진입하지 않음
       overlay.style.display = 'none';
       _enterAiMode(true); // overlay 사라진 후 AI 모드 진입
     }, 320);
@@ -3920,6 +3922,7 @@ function toggleQuote() {
 
 // ─── 달력 상태 완전 복구 헬퍼 ───
 function _restoreInboxPanels(animate) {
+  var myGen = _aiTransGen; // 호출자(goPage)가 이미 증가시켜둔 현재 세대를 그대로 참조
   var el = document.querySelector('.el');
   var edWrapper = document.querySelector('.ed-wrapper');
   var fp = document.querySelector('.fp');
@@ -3951,12 +3954,14 @@ function _restoreInboxPanels(animate) {
   var dur = '.75s cubic-bezier(.4,0,.2,1)';
 
   requestAnimationFrame(function(){ requestAnimationFrame(function(){
+    if (myGen !== _aiTransGen) return;
     // overlay: flex:1 → flex:0 축소 + fade-out
     if (overlay) {
       overlay.style.transition = 'flex ' + dur + ', opacity .6s cubic-bezier(.4,0,.2,1)';
       overlay.style.flex = '0';
       overlay.style.opacity = '0';
       setTimeout(function(){
+        if (myGen !== _aiTransGen) return;
         overlay.style.display = 'none';
         overlay.style.flex = '';
         overlay.style.transition = '';
@@ -3967,21 +3972,23 @@ function _restoreInboxPanels(animate) {
       el.style.transition = 'flex ' + dur + ', max-width ' + dur + ', min-width ' + dur + ', opacity .6s .1s cubic-bezier(.4,0,.2,1)';
       el.style.flex = '';
       el.style.maxWidth = '333px'; el.style.minWidth = '333px';
-      setTimeout(function(){ el.style.opacity = '1'; }, 100);
+      setTimeout(function(){ if (myGen === _aiTransGen) el.style.opacity = '1'; }, 100);
     }
     // edWrapper: 살짝 지연 후 flex 확장 + fade-in
     if (edWrapper) {
       edWrapper.style.transition = 'flex ' + dur + ', opacity .6s .15s cubic-bezier(.4,0,.2,1)';
       edWrapper.style.flex = '';
       setTimeout(function(){
+        if (myGen !== _aiTransGen) return;
         requestAnimationFrame(function(){ requestAnimationFrame(function(){
+          if (myGen !== _aiTransGen) return;
           edWrapper.style.opacity = '1';
         }); });
       }, 150);
     }
   }); });
 
-  setTimeout(function(){ _syncEdView(); }, 600);
+  setTimeout(function(){ if (myGen === _aiTransGen) _syncEdView(); }, 600);
 }
 
 function _syncEdView() {
@@ -3995,6 +4002,9 @@ function _syncEdView() {
 
 // ─── PAGE NAV ───
 function goPage(p) {
+  // 전역 전환 세대 카운터 — 빠르게 연속으로 탭을 바꾸면 이전 호출의 지연된 콜백이
+  // 나중에 끼어들어 화면을 덮어쓰는 걸 막는다 (AI 모드 전환과 동일한 카운터 공유)
+  var myGen = ++_aiTransGen;
   // 달력 아이콘 active 처리
   document.querySelectorAll('.sb-icon').forEach(x=>x.classList.remove('active'));
   document.getElementById('nl-'+p)?.classList.add('active');
@@ -4113,6 +4123,7 @@ function goPage(p) {
     }
 
     requestAnimationFrame(function(){ requestAnimationFrame(function(){
+      if (myGen !== _aiTransGen) return;
       var dur = '.55s cubic-bezier(.4,0,.2,1)';
 
       // el + edWrapper: flex 축소 + fade-out (동시)
@@ -4135,6 +4146,7 @@ function goPage(p) {
         overlay.style.opacity = '1';
         overlay.style.pointerEvents = '';
         setTimeout(function(){
+          if (myGen !== _aiTransGen) return; // 그 사이 다른 탭으로 이동했으면 이 오래된 콜백은 무시
           if (main) {
             main.style.transition = 'opacity .4s cubic-bezier(.4,0,.2,1)';
             main.style.opacity = '1';
@@ -4284,9 +4296,10 @@ function goPage(p) {
     if (!calWasOpen) {
       if (fp) { fp.style.opacity='0'; fp.style.transform='translateX(-20px)'; }
       if (el) { el.style.display=''; el.style.opacity='0'; el.style.maxWidth='0'; el.style.minWidth='0'; }
-      setTimeout(function(){ if (fp) { fp.style.opacity='1'; fp.style.transform='translateX(0)'; } }, 80);
-      setTimeout(function(){ if (el) { el.style.opacity='1'; el.style.maxWidth='333px'; el.style.minWidth='333px'; } }, 700);
+      setTimeout(function(){ if (myGen === _aiTransGen && fp) { fp.style.opacity='1'; fp.style.transform='translateX(0)'; } }, 80);
+      setTimeout(function(){ if (myGen === _aiTransGen && el) { el.style.opacity='1'; el.style.maxWidth='333px'; el.style.minWidth='333px'; } }, 700);
       setTimeout(function(){
+        if (myGen !== _aiTransGen) return;
         var edView = document.getElementById('ed-view');
         var edBlank = document.getElementById('ed-blank');
         if (selId && edView) {
