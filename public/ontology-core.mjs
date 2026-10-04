@@ -130,8 +130,9 @@ export function ontologyContext(graph, query, { now = new Date(), timeZone = 'As
   const weekEnd = nextWeek.toISOString().slice(0, 10);
   const mails = graph.nodes.filter(n => n.type === 'Email');
   const inbox = mails.filter(n => n.properties.labels.includes('INBOX'));
+  const received = mails.filter(n => !n.properties.labels.includes('SENT') && !n.properties.labels.includes('DRAFT'));
   const inWeek = n => { const d = localDay(n.properties.date, timeZone); return d && d >= weekStart && d < weekEnd; };
-  const counts = { indexedMail: mails.length, indexedInbox: inbox.length, indexedMailThisWeek: mails.filter(inWeek).length, indexedInboxThisWeek: inbox.filter(inWeek).length };
+  const counts = { indexedMail: mails.length, indexedInbox: inbox.length, indexedReceived: received.length, indexedMailThisWeek: mails.filter(inWeek).length, indexedInboxThisWeek: inbox.filter(inWeek).length, indexedReceivedThisWeek: received.filter(inWeek).length };
   const seeds = searchOntology(graph, query, 16);
   const ids = new Set(seeds.map(n => n.id));
   if (focusId && graph.byId.has(focusId)) ids.add(focusId);

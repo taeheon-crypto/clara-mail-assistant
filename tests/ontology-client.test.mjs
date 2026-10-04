@@ -71,3 +71,21 @@ test('every chat call uses the shared bridge and forwards current source identit
   await sandbox.window._claraChatFetch('/api/chat', { body: JSON.stringify({ messages: [{ role: 'user', content: 'Question' }] }) });
   assert.equal(sent.ontologyContext, 'shared-context');
 });
+test('weekly mail totals work without AI; incomplete snapshots are qualified and filtered questions go to AI', async () => {
+  let calls = 0;
+  const evidence = { timeZone: 'Asia/Seoul', weekStart: '2026-10-05', weekEndExclusive: '2026-10-12', counts: { indexedReceivedThisWeek: 7, indexedInboxThisWeek: 3, indexedMailThisWeek: 11 }, coverage: { mail: { status: 'syncing' } } };
+  const sandbox = { Response, window: { ClaraOntology: { context: async () => JSON.stringify(evidence) } }, fetch: async () => { calls++; return Response.json({}); } };
+  vm.runInNewContext(await readFile(new URL('../public/ontology-bridge.js', import.meta.url), 'utf8'), sandbox);
+  async function ask(q) { return (await sandbox.window._claraChatFetch('/api/chat', { body: JSON.stringify({ messages: [{ role: 'user', content: q }] }) })).json(); }
+  const received = await ask('이번주 온 메일 몇개임?');
+  assert.match(received.content[0].text, /7통/);
+  assert.match(received.content[0].text, /전체 동기화가 끝나지 않아/);
+  assert.equal(calls, 0);
+  evidence.coverage.mail.status = 'complete';
+  assert.match((await ask('이번 주 받은편지함 몇 개?')).content[0].text, /3통/);
+  assert.match((await ask('이번주 전체 메일 몇개야?')).content[0].text, /11통/);
+  assert.equal(calls, 0);
+  await ask('김 대표에게 이번주 온 메일 몇개임?');
+  await ask('이번주 온 메일 몇개임? 중요한 것 요약해줘');
+  assert.equal(calls, 2);
+});
