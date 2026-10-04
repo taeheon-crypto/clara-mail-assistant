@@ -2203,6 +2203,17 @@ function _enterAiMode(fromCalendar) {
     var items = ['Insert files between flags','Email body transition animation','Smooth transition between attachments','Improve calendar button UI','Calendar click AI tool popup','Calendar button style & state setup','Remove AI search bar from email body','HTML file hover & icon state fix','HTML email attachment display feature','Portfolio company proposal draft','How do I do this?','Vertical integrated AI product overview','Korea Investment & Securities interview prep','BigBang Angels internship interview questions','MFIN7009 delta hedging R code review','DCF modeling template','Personal statement draft review','HKU MFin thesis feedback','Black-Scholes option formula notes','KB Asset Management Fixed Income cover letter','Email reply draft','Interest rate swap explanation','Interview question list','EIP Asset Management project finance overview','Korea bond market trend analysis','English resume proofreading','Heungkuk Securities Research RA cover letter','Basis trading strategy explanation','Weekly market report draft','Seoul Money Brokerage IDB role overview'];
     recents.innerHTML = items.map(function(t){ return '<div style="padding:7px 8px;border-radius:6px;font-size:13px;color:#374151;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.4;min-height:30px;flex-shrink:0;box-sizing:border-box" onmouseenter="this.style.background=\'#f3f4f6\'" onmouseleave="this.style.background=\'\'">' + t + '</div>'; }).join('');
   }
+
+  // ── 최종 안전장치: 이 전환이 여전히 최신이면 AI 패널이 확실히 보이는 상태로 강제 고정 ──
+  setTimeout(function(){
+    if (myGen !== _aiTransGen) return;
+    var mailViewFinal = document.getElementById('fp-mail-view');
+    var aiViewFinal = document.getElementById('fp-ai-view');
+    var elFinal = document.querySelector('.el');
+    if (mailViewFinal) mailViewFinal.style.display = 'none';
+    if (aiViewFinal) { aiViewFinal.style.display = 'flex'; aiViewFinal.style.opacity = '1'; }
+    if (elFinal) { elFinal.style.opacity = '0'; elFinal.style.maxWidth = '0'; elFinal.style.minWidth = '0'; }
+  }, 900);
 }
 function _exitAiMode() {
   if (!_aiMode) return;
@@ -2285,6 +2296,15 @@ function _exitAiMode() {
     if (el) { el.style.maxWidth = '333px'; el.style.opacity = '1'; }
     setTimeout(function(){ if (myGen === _aiTransGen && el) el.style.minWidth = '333px'; }, 600);
   }); });
+
+  // ── 최종 안전장치: 이 전환이 여전히 최신이면 받은편지함 mailView가 확실히 보이는 상태로 강제 고정 ──
+  setTimeout(function(){
+    if (myGen !== _aiTransGen) return;
+    var mailViewFinal = document.getElementById('fp-mail-view');
+    var aiViewFinal = document.getElementById('fp-ai-view');
+    if (mailViewFinal) { mailViewFinal.style.display = 'flex'; mailViewFinal.style.opacity = '1'; }
+    if (aiViewFinal) aiViewFinal.style.display = 'none';
+  }, 900);
 }
 
 
@@ -4308,6 +4328,21 @@ function goPage(p) {
         }
       }, 100);
     }
+    // ── 최종 안전장치: 이 전환이 여전히 최신 상태일 때만(= 그 사이 다른 탭으로 또 넘어가지 않았을 때만)
+    //    받은편지함 UI를 확실히 보이는 상태로 강제 고정한다. (더 최신 전환이 있으면 그쪽이 책임지므로 여긴 건너뜀)
+    setTimeout(function(){
+      if (myGen !== _aiTransGen) return;
+      var fpFinal = document.querySelector('.fp');
+      var elFinal = document.querySelector('.el');
+      var mailViewFinal = document.getElementById('fp-mail-view');
+      var aiViewFinal = document.getElementById('fp-ai-view');
+      if (fpFinal) { fpFinal.style.opacity = '1'; fpFinal.style.transform = ''; }
+      if (elFinal) { elFinal.style.opacity = '1'; elFinal.style.maxWidth = '333px'; elFinal.style.minWidth = '333px'; elFinal.style.pointerEvents = ''; }
+      if (!_aiMode) {
+        if (mailViewFinal) { mailViewFinal.style.display = 'flex'; mailViewFinal.style.opacity = '1'; }
+        if (aiViewFinal) aiViewFinal.style.display = 'none';
+      }
+    }, 850);
   }
 }
 
