@@ -2059,6 +2059,7 @@ function refreshAiMode() {
 }
 
 var _aiMode = false;
+var _aiTransGen = 0; // 빠른 연속 전환 시 오래된 setTimeout 콜백이 새 상태를 덮어쓰는 걸 막기 위한 세대 카운터
 function toggleAiMode() {
   // page-projects는 absolute overlay이므로 별도 복구 불필요
   // page-projects 비활성화, page-inbox 활성화
@@ -2098,6 +2099,7 @@ function toggleAiMode() {
 function _enterAiMode(fromCalendar) {
   if (_aiMode) return; // 이미 AI 모드면 무시
   _aiMode = true;
+  var myGen = ++_aiTransGen;
   document.querySelectorAll('.sb-icon').forEach(function(x){ x.classList.remove('active'); });
 
   var mailView = document.getElementById('fp-mail-view');
@@ -2139,7 +2141,7 @@ function _enterAiMode(fromCalendar) {
   if (el && !fromCalendar) {
     el.style.transition = 'max-width .55s cubic-bezier(.4,0,.2,1), min-width .55s cubic-bezier(.4,0,.2,1), opacity .4s cubic-bezier(.4,0,.2,1), transform .5s cubic-bezier(.4,0,.2,1)';
     el.style.opacity = '0'; el.style.transform = 'translateX(8px) scale(0.98)'; el.style.pointerEvents = 'none';
-    setTimeout(function(){ el.style.maxWidth = '0'; el.style.minWidth = '0'; el.style.transform = 'translateX(0)'; }, 30);
+    setTimeout(function(){ if (myGen === _aiTransGen) { el.style.maxWidth = '0'; el.style.minWidth = '0'; el.style.transform = 'translateX(0)'; } }, 30);
   }
 
   // fp: mail→ai view 크로스페이드
@@ -2148,12 +2150,14 @@ function _enterAiMode(fromCalendar) {
     mailView.style.opacity = '0';
   }
   setTimeout(function(){
+    if (myGen !== _aiTransGen) return; // 그 사이 다른 전환이 시작됐으면 이 오래된 콜백은 무시
     if (mailView) { mailView.style.display = 'none'; mailView.style.transition = ''; }
     if (aiView) {
       aiView.style.display = 'flex';
       aiView.style.opacity = '0';
       aiView.style.transition = 'opacity .6s cubic-bezier(.4,0,.2,1)';
       requestAnimationFrame(function(){ requestAnimationFrame(function(){
+        if (myGen !== _aiTransGen) return;
         aiView.style.opacity = '1';
       }); });
     }
@@ -2181,10 +2185,11 @@ function _enterAiMode(fromCalendar) {
       edWr.style.opacity = '0';
       edWr.style.transform = 'translateX(40px)';
       requestAnimationFrame(function(){ requestAnimationFrame(function(){
+        if (myGen !== _aiTransGen) return;
         edWr.style.transition = 'opacity .75s cubic-bezier(.4,0,.2,1), transform .75s cubic-bezier(.4,0,.2,1)';
         edWr.style.opacity = '1';
         edWr.style.transform = 'translateX(0)';
-        setTimeout(function(){ edWr.style.transition = ''; edWr.style.transform = ''; }, 800);
+        setTimeout(function(){ if (myGen === _aiTransGen) { edWr.style.transition = ''; edWr.style.transform = ''; } }, 800);
       }); });
     }
   }
@@ -2199,6 +2204,7 @@ function _enterAiMode(fromCalendar) {
 function _exitAiMode() {
   if (!_aiMode) return;
   _aiMode = false;
+  var myGen = ++_aiTransGen;
   var mailView = document.getElementById('fp-mail-view');
   var aiView = document.getElementById('fp-ai-view');
   var el = document.querySelector('.el');
@@ -2214,7 +2220,7 @@ function _exitAiMode() {
   if (blankAiBar) {
     blankAiBar.style.opacity = '0';
     blankAiBar.style.transform = 'translate(-50%, calc(-68% + 20px))';
-    setTimeout(function(){ blankAiBar.style.display = 'none'; }, 650);
+    setTimeout(function(){ if (myGen === _aiTransGen) blankAiBar.style.display = 'none'; }, 650);
   }
 
   var fpToggleBtn2 = document.getElementById('fp-ai-toggle-btn');
@@ -2227,6 +2233,7 @@ function _exitAiMode() {
     aiView.style.transition = 'opacity .35s cubic-bezier(.4,0,.2,1)';
     aiView.style.opacity = '0';
     setTimeout(function(){
+      if (myGen !== _aiTransGen) return; // 그 사이 AI 모드로 다시 들어갔으면 이 콜백은 무시
       aiView.style.display = 'none';
       aiView.style.transition = '';
       // aiView 완전히 숨긴 후 mailView 표시
@@ -2234,6 +2241,7 @@ function _exitAiMode() {
         mailView.style.opacity = '0';
         mailView.style.display = 'flex';
         requestAnimationFrame(function(){ requestAnimationFrame(function(){
+          if (myGen !== _aiTransGen) return;
           mailView.style.transition = 'opacity .5s cubic-bezier(.4,0,.2,1)';
           mailView.style.opacity = '1';
         }); });
@@ -2273,8 +2281,9 @@ function _exitAiMode() {
     if (edBlankEl) { edBlankEl.style.display = ''; var ico = edBlankEl.querySelector('svg'); var txt = edBlankEl.querySelector('p'); if (ico) ico.style.display = ''; if (txt) txt.style.display = ''; }
   }
   requestAnimationFrame(function(){ requestAnimationFrame(function(){
+    if (myGen !== _aiTransGen) return;
     if (el) { el.style.maxWidth = '333px'; el.style.opacity = '1'; }
-    setTimeout(function(){ if(el) el.style.minWidth = '333px'; }, 600);
+    setTimeout(function(){ if (myGen === _aiTransGen && el) el.style.minWidth = '333px'; }, 600);
   }); });
 }
 
