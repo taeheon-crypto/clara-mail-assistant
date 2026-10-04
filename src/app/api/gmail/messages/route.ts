@@ -50,15 +50,24 @@ function getRawHtmlBody(payload: any): string | null {
 }
 
 // 인라인 이미지(Content-ID로 cid: 참조되는 이미지) 수집
-function getInlineImages(payload: any): { cid: string; attachmentId: string; mimeType: string }[] {
-  const out: { cid: string; attachmentId: string; mimeType: string }[] = [];
+// 작은 이미지는 attachmentId 없이 body.data에 바로 들어있고, 큰 이미지만 attachmentId로 별도 조회해야 함 — 둘 다 처리
+type InlineImage = { cid: string; mimeType: string; dataUri?: string; attachmentId?: string };
+
+function getInlineImages(payload: any): InlineImage[] {
+  const out: InlineImage[] = [];
   function walk(part: any) {
     if (!part) return;
     const headers = part.headers || [];
     const cidHeader = headers.find((h: any) => h.name.toLowerCase() === "content-id");
-    if (cidHeader && part.body?.attachmentId) {
+    if (cidHeader) {
       const cid = cidHeader.value.replace(/^<|>$/g, "");
-      out.push({ cid, attachmentId: part.body.attachmentId, mimeType: part.mimeType || "image/png" });
+      const mimeType = part.mimeType || "image/png";
+      if (part.body?.data) {
+        const b64 = part.body.data.replace(/-/g, "+").replace(/_/g, "/");
+        out.push({ cid, mimeType, dataUri: `data:${mimeType};base64,${b64}` });
+      } else if (part.body?.attachmentId) {
+        out.push({ cid, mimeType, attachmentId: part.body.attachmentId });
+      }
     }
     if (part.parts) part.parts.forEach(walk);
   }
@@ -66,19 +75,24 @@ function getInlineImages(payload: any): { cid: string; attachmentId: string; mim
   return out;
 }
 
-// 기본 XSS 방지: script/이벤트핸들러/javascript: 제거, cid: 이미지를 프록시 URL로 치환
-function sanitizeAndResolveHtml(html: string, messageId: string, inlineImages: { cid: string; attachmentId: string; mimeType: string }[]): string {
+// 기본 XSS 방지 + 원본 메일에 박힌 고정 높이/스크롤 스타일 제거(중첩 스크롤박스 방지) + cid: 이미지 치환
+function sanitizeAndResolveHtml(html: string, messageId: string, inlineImages: InlineImage[]): string {
   let out = html
     .replace(/<script[\s\S]*?<\/script>/gi, "")
     .replace(/<noscript[\s\S]*?<\/noscript>/gi, "")
     .replace(/\son\w+\s*=\s*"[^"]*"/gi, "")
     .replace(/\son\w+\s*=\s*'[^']*'/gi, "")
-    .replace(/javascript:/gi, "");
+    .replace(/javascript:/gi, "")
+    // 발신 메일 클라이언트가 인용문 등에 박아둔 고정 height/overflow 제거 → 우리 컨테이너가 자연스럽게 전체 높이를 가짐
+    .replace(/(style\s*=\s*"[^"]*)\b(max-height|height|overflow(?:-y)?)\s*:\s*[^;"]+;?/gi, "$1")
+    .replace(/(style\s*=\s*'[^']*)\b(max-height|height|overflow(?:-y)?)\s*:\s*[^;']+;?/gi, "$1");
 
   for (const img of inlineImages) {
-    const proxyUrl = `/api/gmail/attachment?messageId=${encodeURIComponent(messageId)}&attachmentId=${encodeURIComponent(img.attachmentId)}&mimeType=${encodeURIComponent(img.mimeType)}&filename=inline`;
+    const src = img.dataUri
+      ? img.dataUri
+      : `/api/gmail/attachment?messageId=${encodeURIComponent(messageId)}&attachmentId=${encodeURIComponent(img.attachmentId!)}&mimeType=${encodeURIComponent(img.mimeType)}&filename=inline`;
     const re = new RegExp(`cid:${img.cid.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "gi");
-    out = out.replace(re, proxyUrl);
+    out = out.replace(re, src);
   }
   return out;
 }
