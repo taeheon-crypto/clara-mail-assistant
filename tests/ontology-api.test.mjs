@@ -74,3 +74,32 @@ test('malformed chat requests fail before reaching the model', async () => {
     assert.equal((await r.POST(new Request('https://clara.test/api/chat', { method: 'POST', body }))).status, 400);
   }
 });
+
+test('one empty completion retries a free model and preserves a nonempty final answer', async () => {
+  const sent = [];
+  const r = await route('chat', { fetch:async (_url,opts) => {
+    sent.push(JSON.parse(opts.body));
+    return Response.json({choices:[{message:{content:sent.length===1 ? '' : 'Final answer'}}]});
+  }});
+  const res = await r.POST(new Request('https://clara.test/api/chat',{method:'POST',body:JSON.stringify({messages:[{role:'user',content:'Question'}]})}));
+  assert.equal((await res.json()).content[0].text,'Final answer');
+  assert.equal(sent.length,2); assert.equal(sent[1].model,'openrouter/free'); assert.ok(sent[1].max_tokens>=2048);
+});
+
+test('occurrence sync asks Google to expand recurrence and carries pagination, identity and attendees', async () => {
+  let requestUrl;
+  const r = await route('ontology/sync',{fetch:async url => {
+    requestUrl = new URL(url);
+    return Response.json({items:[{id:'instance',recurringEventId:'master',summary:'Daily',start:{date:'2026-10-06'},attendees:[{email:'founder@example.com'}]}],nextPageToken:'more'});
+  }});
+  const res = await r.GET(new Request('https://clara.test/api/ontology/sync?source=occurrences&calendarId=work&start=2026-10-06&end=2026-10-07&timeZone=Asia%2FSeoul&cursor=page2'));
+  const data = await res.json();
+  assert.equal(requestUrl.searchParams.get('singleEvents'),'true'); assert.equal(requestUrl.searchParams.get('pageToken'),'page2');
+  assert.equal(data.cursor,'more'); assert.equal(data.records[0].recurringEventId,'master'); assert.equal(data.records[0].attendees[0].email,'founder@example.com');
+  assert.equal((await r.GET(new Request('https://clara.test/api/ontology/sync?source=occurrences&calendarId=work&start=bad&end=2026-10-07'))).status,400);
+});
+test('invented source IDs are rejected instead of displayed as evidence', async () => {
+  const r = await route('chat',{fetch:async()=>Response.json({choices:[{message:{content:'Answer [mail:invented]'}}]})});
+  const res = await r.POST(new Request('https://clara.test/api/chat',{method:'POST',body:JSON.stringify({messages:[{role:'user',content:'Question'}],ontologyContext:JSON.stringify({nodes:[{id:'mail:real'}],coverage:{},counts:{}})})}));
+  assert.equal(res.status,502); assert.match((await res.json()).error.message,/원본 근거/);
+});

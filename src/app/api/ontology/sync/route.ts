@@ -8,6 +8,7 @@ type GoogleRecord = {
   id: string; threadId?: string; internalDate?: string; labelIds?: string[];
   payload?: MailPart; snippet?: string; summary?: string; status?: string;
   start?: Record<string, string>; end?: Record<string, string>; description?: string;
+  recurringEventId?: string; originalStartTime?: Record<string, string>;
   location?: string; attendees?: { email?: string; displayName?: string }[];
   organizer?: { email?: string; displayName?: string }; recurrence?: string[]; htmlLink?: string;
 };
@@ -88,19 +89,31 @@ export async function GET(req: Request) {
       const data = await google(url);
       return NextResponse.json({ records: (data.items || []).map((c: GoogleRecord) => ({ id: c.id, name: c.summary })), cursor: data.nextPageToken || null }, { headers: privateHeaders });
     }
-    if (source === 'events' && params.get('calendarId')) {
+    if (['events', 'occurrences'].includes(source || '') && params.get('calendarId')) {
       const calendarId = params.get('calendarId')!;
       const url = new URL(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`);
       url.searchParams.set('maxResults', '100');
       // Index complete stored events and recurring series, not a silently limited time window.
-      url.searchParams.set('singleEvents', 'false');
+      url.searchParams.set('singleEvents', source === 'occurrences' ? 'true' : 'false');
+      if (source === 'occurrences') {
+        const start = params.get('start') || '', end = params.get('end') || '', timeZone = params.get('timeZone') || 'Asia/Seoul';
+        const validDate = (v: string) => /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(v)) && new Date(v).toISOString().slice(0, 10) === v;
+        if (!validDate(start) || !validDate(end) || start >= end || Date.parse(end) - Date.parse(start) > 370 * 86400000) return NextResponse.json({ error: 'invalid_occurrence_range' }, { status: 400, headers: privateHeaders });
+        try { new Intl.DateTimeFormat('en', { timeZone }); } catch { return NextResponse.json({ error: 'invalid_time_zone' }, { status: 400, headers: privateHeaders }); }
+        // Broaden UTC bounds to cover every IANA zone, then filter exact local days
+        // in the graph. Google expands RRULE, exceptions, cancellations and DST.
+        url.searchParams.set('timeMin', new Date(Date.parse(start) - 36 * 3600000).toISOString());
+        url.searchParams.set('timeMax', new Date(Date.parse(end) + 36 * 3600000).toISOString());
+        url.searchParams.set('timeZone', timeZone);
+        url.searchParams.set('orderBy', 'startTime');
+      }
       url.searchParams.set('showDeleted', 'false');
       if (params.get('cursor')) url.searchParams.set('pageToken', params.get('cursor')!);
       const data = await google(url);
       const records = (data.items || []).filter((e: GoogleRecord) => e.status !== 'cancelled').map((e: GoogleRecord) => ({
         id: e.id, calendarId, title: e.summary, start: e.start, end: e.end,
         description: e.description, location: e.location, attendees: e.attendees,
-        organizer: e.organizer, recurrence: e.recurrence, htmlLink: e.htmlLink
+        organizer: e.organizer, recurrence: e.recurrence, recurringEventId: e.recurringEventId, originalStartTime: e.originalStartTime, htmlLink: e.htmlLink
       }));
       return NextResponse.json({ records, cursor: data.nextPageToken || null }, { headers: privateHeaders });
     }

@@ -4969,7 +4969,7 @@ async function arSend() {
     arMsgs.push({role:'assistant',content:rep});
     document.getElementById('ar-typing').innerHTML = escHtml(rep).replace(/\n/g,'<br>');
   } catch(e) {
-    document.getElementById('ar-typing').innerHTML = `<span style="color:#dc2626">${e.message}</span>`;
+    document.getElementById('ar-typing').innerHTML = `<span style="color:#dc2626">${escHtml(e.message)}</span>`;
     arMsgs.pop();
   } finally {
     arLoading = false;
@@ -5197,7 +5197,7 @@ async function cpSend(){
     cpMsgs.push({role:'assistant',content:rep});
     document.getElementById('cp-typing-el').querySelector('.cp-bubble').innerHTML=escHtml(rep).replace(/\n/g,'<br>');
   }catch(e){
-    document.getElementById('cp-typing-el').querySelector('.cp-bubble').innerHTML=`<span style="color:#dc2626">${e.message.includes('401')?'API 키를 확인해주세요.':e.message}</span>`;
+    document.getElementById('cp-typing-el').querySelector('.cp-bubble').innerHTML=`<span style="color:#dc2626">${escHtml(e.message)}</span>`;
     cpMsgs.pop();
   }finally{cpLoading=false;cpToggleSend();document.getElementById('cp-msgs').scrollTop=99999;}
 }
@@ -5650,7 +5650,7 @@ async function cpSendInt() {
     const reply = (data.content||[]).map(c => c.text || '').join('') || '죄송합니다, 응답을 받지 못했습니다.';
     typingEl.querySelector('.cp-bubble').innerHTML = escHtml(reply).replace(/\n/g,'<br>');
   } catch(e) {
-    typingEl.querySelector('.cp-bubble').innerHTML = '<span style="color:#dc2626;font-size:12px">오류: ' + (e.message || e) + '</span>';
+    typingEl.querySelector('.cp-bubble').innerHTML = '<span style="color:#dc2626;font-size:12px">오류: ' + escHtml(String(e.message || e)) + '</span>';
   } finally {
     cpIntLoading = false;
     msgs.scrollTop = 99999;
@@ -5772,7 +5772,7 @@ async function cpSendPanel(panelId) {
     const reply = data.content?.[0]?.text || '응답을 받지 못했습니다.';
     aiDiv.querySelector('.cp-bubble').innerHTML = escHtml(reply).replace(/\n/g,'<br>');
   } catch(e) {
-    aiDiv.querySelector('.cp-bubble').innerHTML = `<span style="color:#dc2626">${e.message}</span>`;
+    aiDiv.querySelector('.cp-bubble').innerHTML = `<span style="color:#dc2626">${escHtml(e.message)}</span>`;
   }
   msgs_el.scrollTop = 99999;
 }
