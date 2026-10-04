@@ -1,5 +1,6 @@
 // Shared, deterministic ontology projection. Google IDs and email addresses are
 // identities; names and subject similarity never merge people or source records.
+import { retrievalQuery } from './ontology-query.mjs';
 export const TYPES = { Person: '사람', Organization: '이메일 도메인', Project: '프로젝트 후보', Thread: '메일 대화', Email: '메일', Event: '일정', Task: '업무 후보', Document: '첨부파일' };
 const PUBLIC_DOMAINS = new Set(['gmail.com', 'googlemail.com', 'outlook.com', 'hotmail.com', 'naver.com', 'daum.net', 'hanmail.net', 'yahoo.com', 'icloud.com']);
 const clean = v => String(v || '').trim();
@@ -77,7 +78,7 @@ export function buildOntology(emails = [], events = [], coverage = {}, manual = 
       sourceId: ev.id, calendarId: ev.calendarId, start: ev.start, end: ev.end,
       date: ev.start?.dateTime || ev.start?.date || ev.date,
       text: clean(ev.description || ev.detail), location: ev.location || ev.loc,
-      recurrence: ev.recurrence || [], url: ev.htmlLink || ''
+      recurrence: ev.recurrence || [], recurringEventId: ev.recurringEventId, originalStartTime: ev.originalStartTime, url: ev.htmlLink || ''
     });
     for (const p of ev.attendees || []) {
       const who = person(p.email, p.displayName, id);
@@ -92,6 +93,9 @@ export function buildOntology(emails = [], events = [], coverage = {}, manual = 
       node(n.id, n.type, n.label, { status: 'confirmed', extraction: 'user' });
       nodes.get(n.id).properties = { status: 'confirmed', extraction: 'user' };
     }
+  }
+  for (const event of events) {
+    if (event.recurringEventId && nodes.has('event:' + event.calendarId + ':' + event.recurringEventId)) edge('event:' + event.calendarId + ':' + event.recurringEventId, 'recurs_as', 'event:' + event.calendarId + ':' + event.id, 'event:' + event.calendarId + ':' + event.id);
   }
   for (const e of manual.edges || []) {
     if (nodes.has(e.from) && nodes.has(e.to)) {
@@ -135,6 +139,11 @@ export function ontologyContext(graph, query, { now = new Date(), timeZone = 'As
   const counts = { indexedMail: mails.length, indexedInbox: inbox.length, indexedReceived: received.length, indexedMailThisWeek: mails.filter(inWeek).length, indexedInboxThisWeek: inbox.filter(inWeek).length, indexedReceivedThisWeek: received.filter(inWeek).length };
   const seeds = searchOntology(graph, query, 16);
   const ids = new Set(seeds.map(n => n.id));
+  const structured = retrievalQuery(graph, query, { now, timeZone });
+  if (structured) {
+    ids.clear();
+    structured.records.slice(0, 60).forEach(n => ids.add(n.id));
+  }
   if (focusId && graph.byId.has(focusId)) ids.add(focusId);
   // Two hops follow explicit graph relations rather than only matching keywords.
   let frontier = [...ids];
@@ -146,7 +155,7 @@ export function ontologyContext(graph, query, { now = new Date(), timeZone = 'As
     }
     frontier = next;
   }
-  if (/이번\s*주|this week|최근|recent|오늘|내일|tomorrow|today/i.test(query)) {
+  if (!structured && /이번\s*주|this week|최근|recent|오늘|내일|tomorrow|today/i.test(query)) {
     mails.slice().sort((a, b) => Date.parse(b.properties.date) - Date.parse(a.properties.date)).slice(0, 8).forEach(n => ids.add(n.id));
     const tomorrow = new Date(today + 'T00:00:00Z'); tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
     const nextDay = tomorrow.toISOString().slice(0, 10);
@@ -156,8 +165,11 @@ export function ontologyContext(graph, query, { now = new Date(), timeZone = 'As
   const nodes = [...ids].map(id => graph.byId.get(id)).filter(Boolean).slice(0, 80).map(n => ({ ...n, properties: { ...n.properties, text: clean(n.properties.text).slice(0, 1200) } }));
   const included = new Set(nodes.map(n => n.id));
   const relations = graph.edges.filter(e => included.has(e.from) && included.has(e.to)).slice(0, 120);
-  const serialized = JSON.stringify({ today, timeZone, weekStart, weekEndExclusive: weekEnd, counts, coverage: graph.coverage, nodes, relations });
+  // Cursor/window membership is used locally for exact queries, not model input.
+  const modelCoverage = { ...graph.coverage, calendar: { ...graph.coverage.calendar, ranges: Object.fromEntries(Object.entries(graph.coverage.calendar?.ranges || {}).slice(-4).map(([key, range]) => [key, { status: range.status, finishedAt: range.finishedAt, error: range.error }])) } };
+  const sourceQuery = structured ? { start: structured.plan.start, endExclusive: structured.plan.end, filter: structured.plan.filter, types: structured.plan.types, matchedRecords: structured.records.length, includedRecords: structured.records.slice(0, 60).filter(n => included.has(n.id)).length, matchedSourceIds: structured.records.slice(0, 60).filter(n => included.has(n.id)).map(n => n.id), exhaustive: false } : null;
+  const serialized = JSON.stringify({ today, timeZone, weekStart, weekEndExclusive: weekEnd, counts, coverage: modelCoverage, sourceQuery, nodes, relations });
   // Preserve valid JSON and evidence when restricting model context.
   if (serialized.length <= 90000) return serialized;
-  return JSON.stringify({ today, timeZone, counts, coverage: graph.coverage, nodes: nodes.slice(0, 30), relations: relations.filter(e => nodes.slice(0, 30).some(n => n.id === e.from) && nodes.slice(0, 30).some(n => n.id === e.to)), retrievalTruncated: true });
+  return JSON.stringify({ today, timeZone, counts, coverage: modelCoverage, sourceQuery: sourceQuery ? { ...sourceQuery, includedRecords: structured.records.filter(n => nodes.slice(0, 30).some(v => v.id === n.id)).length, matchedSourceIds: sourceQuery.matchedSourceIds.filter(id => nodes.slice(0, 30).some(n => n.id === id)) } : null, nodes: nodes.slice(0, 30), relations: relations.filter(e => nodes.slice(0, 30).some(n => n.id === e.from) && nodes.slice(0, 30).some(n => n.id === e.to)), retrievalTruncated: true });
 }
