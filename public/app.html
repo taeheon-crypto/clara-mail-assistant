@@ -1963,6 +1963,7 @@ function elTabSel(el, label) {
 
 // ─── AI 새 채팅: 어떤 상태에서도 AI 홈으로 ───
 function refreshAiMode() {
+  _resetPanelTransitionArtifacts();
   // 1. inbox 페이지 강제 활성화 (ed-wrapper는 inbox 안에 있음)
   document.querySelectorAll('.page').forEach(function(p){ p.classList.remove('active','fade-in'); });
   var inboxPg = document.getElementById('page-inbox');
@@ -2061,8 +2062,16 @@ function refreshAiMode() {
 
 var _aiMode = false;
 var _aiTransGen = 0; // 빠른 연속 전환 시 오래된 setTimeout 콜백이 새 상태를 덮어쓰는 걸 막기 위한 세대 카운터
+
+// 어떤 전환이든 "시작하는 순간" 무조건 호출 — 이전 전환이 중간에 끊겨 남긴 transform/opacity 잔여값을
+// 깨끗하게 지운 뒤 시작하므로, 글자가 옆으로 밀려 잘려 보이는 등의 누적 오류가 영구히 남지 않는다.
+function _resetPanelTransitionArtifacts() {
+  var fp = document.querySelector('.fp');
+  if (fp) { fp.style.transition = 'none'; fp.style.transform = ''; fp.style.opacity = ''; }
+}
 function toggleAiMode() {
   var myGen = ++_aiTransGen;
+  _resetPanelTransitionArtifacts();
   // page-projects는 absolute overlay이므로 별도 복구 불필요
   // page-projects 비활성화, page-inbox 활성화
   var _ppAi = document.getElementById('page-projects');
@@ -2103,6 +2112,7 @@ function _enterAiMode(fromCalendar) {
   if (_aiMode) return; // 이미 AI 모드면 무시
   _aiMode = true;
   var myGen = ++_aiTransGen;
+  _resetPanelTransitionArtifacts();
   document.querySelectorAll('.sb-icon').forEach(function(x){ x.classList.remove('active'); });
 
   var mailView = document.getElementById('fp-mail-view');
@@ -2219,6 +2229,7 @@ function _exitAiMode() {
   if (!_aiMode) return;
   _aiMode = false;
   var myGen = ++_aiTransGen;
+  _resetPanelTransitionArtifacts();
   var mailView = document.getElementById('fp-mail-view');
   var aiView = document.getElementById('fp-ai-view');
   var el = document.querySelector('.el');
@@ -4025,6 +4036,7 @@ function goPage(p) {
   // 전역 전환 세대 카운터 — 빠르게 연속으로 탭을 바꾸면 이전 호출의 지연된 콜백이
   // 나중에 끼어들어 화면을 덮어쓰는 걸 막는다 (AI 모드 전환과 동일한 카운터 공유)
   var myGen = ++_aiTransGen;
+  _resetPanelTransitionArtifacts();
   // 달력 아이콘 active 처리
   document.querySelectorAll('.sb-icon').forEach(x=>x.classList.remove('active'));
   document.getElementById('nl-'+p)?.classList.add('active');
