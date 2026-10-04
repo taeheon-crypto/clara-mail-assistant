@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 
-// OpenRouter에서 제공하는 모델 — 필요시 교체 가능
-const MODEL = "anthropic/claude-sonnet-4.5";
+// OpenRouter 무료 모델 (완전 무료, cost:0 확인됨) — 필요시 교체 가능
+const MODEL = "google/gemma-4-26b-a4b-it:free";
 
 // 프런트(원본 app.html)는 Anthropic Messages API 형태로 요청/응답을 기대함
 // ({model, max_tokens, system, messages} → {content:[{text}]})
