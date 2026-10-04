@@ -1612,6 +1612,9 @@ const EMAILS = [
    attachments:[{name:'MFIN7009_Submission_Guide.pdf',size:'167KB',type:'pdf'},{name:'Grading_Rubric.pdf',size:'93KB',type:'pdf'}],
    project:'HKU 학교생활',pDesc:'HKU 관련 이메일 관리'},
 ];
+// 로그인 상태에서만 이 페이지가 열리므로(루트에서 세션 체크) 데모 데이터는 바로 비워서
+// 실제 Gmail 데이터가 올 때까지 깜빡임 없이 로딩 상태만 보여준다
+EMAILS.length = 0;
 
 let selId = null;
 let curTab = 'brief';
@@ -1650,7 +1653,7 @@ let activeFilters = { label: 'inbox', sender: '', attOnly: false, from: '', to: 
 let _inlineMode = null;
 const _savedComposes = {};
 const _minBars = {};
-renderList();
+document.getElementById('el-scroll').innerHTML = '<div style="padding:60px 20px;text-align:center;color:#9ca3af;font-size:13px">메일을 불러오는 중...</div>';
 updPill();
 
 function searchEmails(q) {
