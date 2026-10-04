@@ -1,0 +1,213 @@
+import { buildOntology, searchOntology, ontologyContext, TYPES } from './ontology-core.mjs';
+
+const emptyState = () => ({ version: 1, emails: {}, events: {}, calendars: [], manual: { nodes: [], edges: [] }, sync: { mail: { status: 'idle', cursor: null }, calendar: { status: 'idle', index: 0, cursor: null, listCursor: null, listed: false } } });
+let state = emptyState(), graph = buildOntology(), account = '', db, running = false, paused = false, selectedId = '', query = '', filter = '', statusText = '', persistence = true, queued = false;
+let resolveReady;
+const ready = new Promise(resolve => { resolveReady = resolve; });
+const escape = value => String(value || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+const coverage = () => ({
+  mail: { ...state.sync.mail, indexed: Object.keys(state.emails).length, scope: 'All Gmail messages, including sent, archived, spam and trash' },
+  calendar: { ...state.sync.calendar, indexed: Object.keys(state.events).length, calendars: state.calendars.length, scope: 'All stored events and recurring series; series are not expanded into future occurrences' },
+  persistence: persistence ? 'Account-scoped IndexedDB on this browser; no cross-device sync' : 'Memory only: browser storage unavailable'
+});
+function rebuild() {
+  graph = buildOntology(Object.values(state.emails), Object.values(state.events), coverage(), state.manual);
+  render();
+  window.dispatchEvent(new CustomEvent('clara-ontology-updated', { detail: { nodes: graph.nodes.length, edges: graph.edges.length } }));
+}
+async function openDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open('clara-ontology-v1', 1);
+    req.onupgradeneeded = () => req.result.createObjectStore('accounts');
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function restore() {
+  db = await openDB();
+  return new Promise((resolve, reject) => {
+    const req = db.transaction('accounts').objectStore('accounts').get(account);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function save() {
+  if (!db || !persistence) return;
+  try {
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction('accounts', 'readwrite');
+      tx.objectStore('accounts').put(state, account);
+      tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); tx.onabort = () => reject(tx.error);
+    });
+  } catch { persistence = false; statusText = '브라우저 저장 공간이 부족합니다. 현재 세션에서만 인덱스를 유지합니다.'; }
+}
+async function page(params) {
+  const res = await fetch('/api/ontology/sync?' + new URLSearchParams(params), { credentials: 'same-origin' });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) { const error = new Error(data.error || '동기화 오류'); error.status = res.status; throw error; }
+  return data;
+}
+async function run() {
+  if (running || !account) return;
+  running = true; paused = false;
+  for (const source of [state.sync.mail, state.sync.calendar]) if (source.status === 'error') source.status = 'syncing';
+  try {
+    const work = async lock => {
+      if (lock === null) { statusText = '다른 탭에서 동기화 중입니다. 완료 후 이 페이지를 새로고침하세요.'; return; }
+      while (!paused && (!['complete', 'error'].includes(state.sync.mail.status) || !['complete', 'error'].includes(state.sync.calendar.status))) {
+        const active = !['complete', 'error'].includes(state.sync.calendar.status) ? state.sync.calendar : state.sync.mail;
+        try {
+          // Calendars first so the first AI query can already connect both sources.
+          const cal = state.sync.calendar;
+          if (!['complete', 'error'].includes(cal.status)) {
+            cal.status = 'syncing';
+            if (!cal.listed) {
+              const data = await page({ source: 'calendars', ...(cal.listCursor ? { cursor: cal.listCursor } : {}) });
+              for (const c of data.records) if (!state.calendars.some(x => x.id === c.id)) state.calendars.push(c);
+              cal.listCursor = data.cursor; cal.listed = !data.cursor;
+            } else if (cal.index < state.calendars.length) {
+              const calendarId = state.calendars[cal.index].id;
+              const data = await page({ source: 'events', calendarId, ...(cal.cursor ? { cursor: cal.cursor } : {}) });
+              for (const e of data.records) state.events[e.calendarId + ':' + e.id] = e;
+              cal.cursor = data.cursor;
+              if (!cal.cursor) cal.index++;
+            } else { cal.status = 'complete'; cal.finishedAt = new Date().toISOString(); }
+          } else {
+            const mail = state.sync.mail; mail.status = 'syncing';
+            const data = await page({ source: 'mail', ...(mail.cursor ? { cursor: mail.cursor } : {}) });
+            for (const m of data.records) state.emails[m.id] = m;
+            mail.cursor = data.cursor;
+            if (!mail.cursor) { mail.status = 'complete'; mail.finishedAt = new Date().toISOString(); }
+          }
+          delete active.error; statusText = ''; await save(); rebuild();
+          // Ten messages per page and a pause, instead of an unbounded request burst.
+          await wait(1800);
+        } catch (err) {
+          if (err.status === 429) {
+            statusText = 'Google 요청 한도에 도달했습니다. 60초 후 같은 페이지부터 재개합니다.';
+            render();
+            for (let i = 0; i < 60 && !paused; i++) await wait(1000);
+          } else {
+            statusText = err.status === 401 ? '로그인이 만료되었습니다. 다시 로그인해 주세요.' : '동기화 중단: ' + err.message + ' · 재개 버튼으로 다시 시도하세요.';
+            active.status = 'error'; active.error = statusText;
+            if (err.status === 401) paused = true;
+            await save(); rebuild();
+          }
+        }
+      }
+    };
+    if (navigator.locks) await navigator.locks.request('clara-ontology:' + account, { ifAvailable: true }, work);
+    else await work(undefined);
+  } finally {
+    running = false; rebuild();
+    if (queued) { queued = false; await refresh(); }
+  }
+}
+async function refresh() {
+  if (running) { queued = true; return; }
+  const manual = state.manual;
+  state = emptyState(); state.manual = manual;
+  await save(); rebuild(); await run();
+}
+function sourceChanged() {
+  // Preserve the usable graph until the user requests a full refresh.
+  state.sync.mail.status = 'stale'; state.sync.calendar.status = 'stale';
+  statusText = '메일 또는 일정이 변경되었습니다. 새로 동기화하면 관계에도 반영됩니다.';
+  save(); rebuild();
+}
+function mount() {
+  const style = document.createElement('style');
+  style.textContent = `
+    #ontology-dialog{position:fixed;inset:0;width:min(1100px,94vw);height:min(760px,90vh);border:1px solid #e7e2f1;border-radius:18px;padding:0;color:#292438;background:#fff;box-shadow:0 24px 90px #25123c30;z-index:20000}
+    #ontology-dialog::backdrop{background:#21133366}#ontology-dialog *{box-sizing:border-box}
+    .ont-head{display:flex;align-items:center;justify-content:space-between;padding:20px 24px;border-bottom:1px solid #eee8f5}.ont-head h2{margin:0;font-size:20px}.ont-head p{margin:5px 0 0;color:#80738f;font-size:12px}
+    #ontology-dialog button{cursor:pointer;font:inherit;border:1px solid #e5def0;border-radius:8px;background:#fff;padding:7px 12px;color:#593491}#ontology-dialog button:hover{background:#f5f0ff}
+    .ont-toolbar{padding:14px 24px;display:flex;gap:8px;flex-wrap:wrap}.ont-toolbar input{flex:1;min-width:180px;border:1px solid #ded5eb;border-radius:8px;padding:9px 12px;font:inherit}.ont-toolbar select{border:1px solid #ded5eb;border-radius:8px;background:#fff;padding:8px}
+    #ont-status{margin:0 24px 12px;padding:10px 12px;border-radius:9px;background:#f7f4fc;color:#705a8e;font-size:12px;line-height:1.7}
+    .ont-body{display:grid;grid-template-columns:38% 62%;height:calc(100% - 225px);min-height:240px;border-top:1px solid #eee8f5}.ont-list{overflow:auto;border-right:1px solid #eee8f5;padding:10px}.ont-detail{overflow:auto;padding:20px}
+    #ontology-dialog .ont-row{display:block;text-align:left;width:100%;margin:0 0 6px;padding:12px;border:1px solid transparent;color:#352740}.ont-row small{display:block;color:#887996;font-size:11px;margin-bottom:5px}.ont-row span{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.ont-row[aria-current=true]{background:#f1e9ff;border-color:#d9c5ff!important}
+    .ont-detail h3{margin:0 0 10px;font-size:19px;overflow-wrap:anywhere}.ont-detail p{font-size:13px;line-height:1.8;white-space:pre-wrap;overflow-wrap:anywhere}.ont-detail a{color:#7544b4}.ont-relation{border-bottom:1px solid #eee8f5;padding:9px 0;font-size:12px}.ont-relation button{max-width:100%;text-align:left;overflow-wrap:anywhere}.ont-candidate{color:#ac7734;font-size:11px}.ont-empty{padding:24px;font-size:13px;line-height:1.8;color:#8b7b99}.ont-actions{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}
+    @media(max-width:650px){.ont-body{grid-template-columns:42% 58%}.ont-head,.ont-toolbar{padding:12px}.ont-detail{padding:12px}#ont-status{margin:0 12px 8px}.ont-head p{max-width:230px}.ont-head h2{font-size:17px}}
+  `;
+  document.head.append(style);
+  const nav = document.querySelector('.sb-nav');
+  const trigger = document.createElement('button'); trigger.className = 'sb-icon'; trigger.id = 'nl-ontology'; trigger.dataset.tip = 'Knowledge · 지식 연결'; trigger.title = '메일·캘린더 지식 연결'; trigger.setAttribute('aria-label', trigger.title);
+  trigger.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="5" cy="5" r="3"/><circle cx="19" cy="7" r="3"/><circle cx="10" cy="19" r="3"/><path d="m8 5 8 2M6 8l3 8m8-6-5 7"/></svg>';
+  trigger.addEventListener('click', () => open()); (nav || document.body).append(trigger);
+  const dialog = document.createElement('dialog'); dialog.id = 'ontology-dialog'; dialog.setAttribute('aria-labelledby', 'ont-title');
+  dialog.innerHTML = `<div class="ont-head"><div><h2 id="ont-title">Knowledge · 지식 연결</h2><p>메일과 일정에서 연결된 사람, 프로젝트, 업무와 근거</p></div><button id="ont-close" aria-label="닫기">✕</button></div>
+    <div class="ont-toolbar"><input id="ont-search" aria-label="지식 검색" placeholder="사람, 이메일 주소, 프로젝트 검색"><select id="ont-type" aria-label="객체 종류"><option value="">모든 종류</option>${Object.entries(TYPES).map(([type, label]) => `<option value="${type}">${label}</option>`).join('')}</select><button id="ont-sync">동기화</button><button id="ont-pause">일시정지</button></div>
+    <div id="ont-status" role="status" aria-live="polite"></div><div class="ont-body"><div id="ont-list" class="ont-list"></div><div id="ont-detail" class="ont-detail"></div></div>`;
+  document.body.append(dialog);
+  dialog.querySelector('#ont-close').onclick = () => dialog.close();
+  dialog.querySelector('#ont-search').oninput = e => { query = e.target.value; render(); };
+  dialog.querySelector('#ont-type').onchange = e => { filter = e.target.value; render(); };
+  dialog.querySelector('#ont-sync').onclick = () => { if (running) return; if (['complete', 'stale'].includes(state.sync.mail.status) || state.sync.calendar.status === 'stale') refresh(); else run(); };
+  dialog.querySelector('#ont-pause').onclick = () => { paused = true; statusText = '동기화를 일시정지했습니다. 재개하면 이어서 수집합니다.'; render(); };
+  dialog.addEventListener('click', e => {
+    const button = e.target.closest('[data-node]');
+    if (button) { selectedId = button.dataset.node; render(); }
+  });
+  window.addEventListener('clara-source-changed', sourceChanged);
+}
+function open(id) {
+  if (id) selectedId = id;
+  const dialog = document.getElementById('ontology-dialog');
+  if (!dialog.open) dialog.showModal(); render();
+}
+function render() {
+  const dialog = document.getElementById('ontology-dialog'); if (!dialog) return;
+  const mails = Object.keys(state.emails).length, events = Object.keys(state.events).length;
+  const done = state.sync.mail.status === 'complete' && state.sync.calendar.status === 'complete';
+  document.getElementById('ont-status').textContent = `${mails.toLocaleString()}개 메일 · ${events.toLocaleString()}개 일정/반복 시리즈 · ${graph.nodes.length.toLocaleString()}개 객체 · ${graph.edges.length.toLocaleString()}개 관계\n` + (statusText || state.sync.calendar.error || state.sync.mail.error || (done ? '수집 완료 · ' : running ? '전체 데이터를 순차 수집 중 · ' : '미완료 인덱스 · ')) + '프로젝트·업무 자동 추출은 후보입니다. 반복 일정은 시리즈로 저장됩니다. ' + (persistence ? '이 브라우저에 계정별 저장.' : '현재 세션에만 저장.');
+  const sync = document.getElementById('ont-sync'); sync.disabled = running; sync.textContent = running ? '수집 중…' : done || state.sync.mail.status === 'stale' ? '새로 동기화' : '동기화 재개';
+  document.getElementById('ont-pause').disabled = !running || paused;
+  if (!dialog.open) return;
+  const visible = query ? searchOntology(graph, query, graph.nodes.length) : graph.nodes;
+  const ordered = visible.filter(n => !filter || n.type === filter);
+  const list = document.getElementById('ont-list');
+  list.innerHTML = ordered.slice(0, 150).map(n => `<button class="ont-row" data-node="${escape(n.id)}" aria-current="${n.id === selectedId}"><small>${escape(TYPES[n.type])}</small><span>${escape(n.label)}</span></button>`).join('') || '<div class="ont-empty">연결할 데이터를 수집 중입니다. 수집된 내용은 여기에서 검색할 수 있습니다.</div>';
+  if (ordered.length > 150) list.insertAdjacentHTML('beforeend', '<p class="ont-empty">150개 표시 중 · 검색으로 범위를 좁히세요.</p>');
+  const n = graph.byId.get(selectedId); const detail = document.getElementById('ont-detail');
+  if (!n) { detail.innerHTML = '<div class="ont-empty">왼쪽 객체를 선택하면 관련 메일·일정·사람과 연결 근거를 볼 수 있습니다.<br>메일과 일정은 Google 원본 ID, 사람은 이메일 주소로 연결됩니다.</div>'; return; }
+  const p = n.properties, relations = graph.adjacency.get(n.id) || [];
+  const safeUrl = /^https:\/\/(?:mail\.google\.com|calendar\.google\.com|www\.google\.com)\//.test(p.url || '') ? p.url : '';
+  detail.innerHTML = `<small>${escape(TYPES[n.type])}</small><h3>${escape(n.label)}</h3>${p.status === 'candidate' ? '<span class="ont-candidate">자동 추출 후보 · 실제 업무나 프로젝트로 확정되지 않았습니다.</span>' : ''}<p>${escape(p.email || p.date || p.domain || '')}${p.location ? '\n' + escape(p.location) : ''}</p>
+    <div class="ont-actions">${safeUrl ? `<a href="${escape(safeUrl)}" target="_blank" rel="noopener noreferrer">Google 원본 열기 ↗</a>` : ''}<button id="ont-ask">AI에 질문</button>${['Email', 'Event'].includes(n.type) ? '<button id="ont-project">프로젝트에 연결</button>' : ''}</div>
+    ${p.text ? `<p>${escape(p.text.slice(0, 3000))}</p>` : ''}${p.recurrence?.length ? '<p>반복 시리즈입니다. 이 인덱스는 미래의 개별 발생 일정을 전개하지 않습니다.</p>' : ''}<h4>연결 관계 (${relations.length})</h4>
+    ${relations.slice(0, 50).map(e => { const other = graph.byId.get(e.from === n.id ? e.to : e.from); return `<div class="ont-relation">${escape(e.relation)} ${e.inferred ? '<span class="ont-candidate">추정</span>' : '· 원본/사용자 연결'}<br><button data-node="${escape(other.id)}">${escape(TYPES[other.type])} · ${escape(other.label)}</button><div>근거: ${e.evidence.slice(0, 2).map(id => `<button data-node="${escape(id)}">${escape(graph.byId.get(id)?.label || id)}</button>`).join(' ')}</div></div>`; }).join('') || '<p>연결 관계가 없습니다.</p>'}`;
+  document.getElementById('ont-ask').onclick = () => {
+    dialog.close();
+    if (typeof window.openChatPanel === 'function') window.openChatPanel();
+    const input = document.getElementById('cp-input-int');
+    if (input) { input.value = n.label + ' 관련 메일, 일정, 업무를 근거와 함께 정리해줘'; document.getElementById('cp-send-int')?.classList.add('on'); input.focus(); }
+  };
+  const projectButton = document.getElementById('ont-project');
+  if (projectButton) projectButton.onclick = async () => {
+    const label = prompt('연결할 프로젝트 이름'); if (!label?.trim()) return;
+    const projectId = 'project:' + label.trim().normalize('NFKC').toLowerCase();
+    if (!state.manual.nodes.some(x => x.id === projectId)) state.manual.nodes.push({ id: projectId, type: 'Project', label: label.trim() });
+    if (!state.manual.edges.some(x => x.from === n.id && x.to === projectId)) state.manual.edges.push({ from: n.id, to: projectId });
+    await save(); rebuild();
+  };
+}
+window.ClaraOntology = {
+  ready, open, refresh, sourceChanged,
+  async context(question, focusId) { await ready; return account ? ontologyContext(graph, question, { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Seoul', focusId }) : undefined; },
+  async openMail(gmailId) { await ready; open('mail:' + gmailId); },
+  async openEvent(calendarId, eventId) { await ready; open('event:' + calendarId + ':' + eventId); }
+};
+mount();
+try {
+  const res = await fetch('/api/auth/session', { credentials: 'same-origin' });
+  const session = await res.json(); account = session?.user?.email?.toLowerCase() || '';
+  if (account) {
+    try { const saved = await restore(); if (saved?.version === 1) state = saved; } catch { persistence = false; }
+    rebuild(); resolveReady();
+    // Continue an interrupted pass; completed snapshots refresh on explicit request.
+    if (state.sync.mail.status !== 'complete' || state.sync.calendar.status !== 'complete') {
+      if (state.sync.mail.status === 'stale' || state.sync.calendar.status === 'stale') refresh(); else run();
+    }
+  } else { statusText = 'Google 로그인 후 지식 연결을 사용할 수 있습니다.'; resolveReady(); render(); }
+} catch { statusText = '계정 확인에 실패했습니다. 다시 로그인해 주세요.'; resolveReady(); render(); }

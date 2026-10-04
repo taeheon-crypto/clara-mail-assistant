@@ -1209,6 +1209,7 @@ body{display:flex;flex-direction:row;align-items:center;justify-content:center;
                 <div id="g-task-chips" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px"></div>
               </div>
               <div style="display:flex;align-items:center;gap:2px;flex-shrink:0">
+                <button class="g-ico-btn" title="관련 사람·프로젝트·일정" aria-label="메일 지식 연결" onclick="var e=EMAILS.find(function(x){return x.id===selId});if(e &amp;&amp; e.gmailId)window.ClaraOntology?.openMail(e.gmailId)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="5" cy="5" r="3"/><circle cx="19" cy="7" r="3"/><circle cx="10" cy="19" r="3"/><path d="m8 5 8 2M6 8l3 8m8-6-5 7"/></svg></button>
                 <span class="gmail-nav-cnt" id="g-nav-cnt" style="font-size:12px;color:var(--fg-s);padding:0 2px;white-space:nowrap"></span>
                 <button class="g-ico-btn" title="이전" onclick="emailNav(-1)"><svg viewBox="0 0 24 24" stroke="currentColor"><path d="m15 18-6-6 6-6"/></svg></button>
                 <button class="g-ico-btn" title="다음" onclick="emailNav(1)"><svg viewBox="0 0 24 24" stroke="currentColor"><path d="m9 18 6-6-6-6"/></svg></button>
@@ -1746,6 +1747,7 @@ async function _gmailAction(action, extra) {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) { showToast('실패: ' + (data.detail || data.error || res.status)); return null; }
+    window.dispatchEvent(new Event('clara-source-changed'));
     return e;
   } catch (err) {
     showToast('실패: ' + err.message);
@@ -2556,7 +2558,7 @@ async function _baAddAiMsg(query) {
   _baChatHistory.push({ role: 'user', content: query });
 
   try {
-    const res = await fetch('/api/chat', {
+    const res = await _claraChatFetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
@@ -4773,7 +4775,7 @@ async function sendMsg(){
   loading=true; document.getElementById('send-btn').classList.remove('on');
   addMsg('ai','Clara가 생각하는 중...','typing');
   try{
-    const r=await fetch('/api/chat',{
+    const r=await _claraChatFetch('/api/chat',{
       method:'POST',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:1024,system:'You are Clara, an AI email and project assistant by Sprintsolo. Be concise and helpful. Respond in the same language as the user.',messages:msgs})
@@ -4940,7 +4942,7 @@ async function arSend() {
   const inp = document.getElementById('ar-input');
   const txt = inp.value.trim(); if(!txt) return;
 
-  arAddMsg('user', txt);
+  arAddMsg('user', escHtml(txt));
   inp.value = ''; arToggleSend();
   arLoading = true;
 
@@ -4957,7 +4959,7 @@ async function arSend() {
 
   arMsgs.push({role:'user',content:txt});
   try {
-    const r = await fetch('/api/chat',{
+    const r = await _claraChatFetch('/api/chat',{
       method:'POST',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:1024,system:ctx,messages:arMsgs})
@@ -4965,7 +4967,7 @@ async function arSend() {
     if(!r.ok){const er=await r.json().catch(()=>({}));throw new Error(er.error?.message||'HTTP '+r.status);}
     const dd=await r.json();const rep=dd.content?.[0]?.text||'응답 없음';
     arMsgs.push({role:'assistant',content:rep});
-    document.getElementById('ar-typing').innerHTML = rep.replace(/\n/g,'<br>');
+    document.getElementById('ar-typing').innerHTML = escHtml(rep).replace(/\n/g,'<br>');
   } catch(e) {
     document.getElementById('ar-typing').innerHTML = `<span style="color:#dc2626">${e.message}</span>`;
     arMsgs.pop();
@@ -5189,11 +5191,11 @@ async function cpSend(){
   let sys='You are Clara, an AI email and project assistant by Sprintsolo. Be concise, helpful, and friendly. Respond in Korean unless asked otherwise.';
   if(selId){const e=EMAILS.find(x=>x.id===selId);if(e)sys+=`\n\n현재 열린 이메일:\n발신자: ${e.sender}\n제목: ${e.subject}\n본문: ${e.original||e.body}`;}
   try{
-    const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:1024,system:sys,messages:cpMsgs})});
+    const r=await _claraChatFetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:1024,system:sys,messages:cpMsgs})});
     if(!r.ok){const er=await r.json().catch(()=>({}));throw new Error(er.error?.message||'HTTP '+r.status);}
     const dd=await r.json();const rep=dd.content?.[0]?.text||'응답을 받지 못했어요.';
     cpMsgs.push({role:'assistant',content:rep});
-    document.getElementById('cp-typing-el').querySelector('.cp-bubble').innerHTML=rep.replace(/\n/g,'<br>');
+    document.getElementById('cp-typing-el').querySelector('.cp-bubble').innerHTML=escHtml(rep).replace(/\n/g,'<br>');
   }catch(e){
     document.getElementById('cp-typing-el').querySelector('.cp-bubble').innerHTML=`<span style="color:#dc2626">${e.message.includes('401')?'API 키를 확인해주세요.':e.message}</span>`;
     cpMsgs.pop();
@@ -5616,7 +5618,7 @@ async function cpSendInt() {
   // 사용자 메시지
   const userEl = document.createElement('div');
   userEl.className = 'cp-msg cp-user';
-  userEl.innerHTML = `<div class="cp-msg-body"><div class="cp-bubble">${txt}</div></div>`;
+  userEl.innerHTML = `<div class="cp-msg-body"><div class="cp-bubble">${escHtml(txt)}</div></div>`;
   msgs.appendChild(userEl);
   msgs.scrollTop = 99999;
 
@@ -5635,7 +5637,7 @@ async function cpSendInt() {
       ? `You are Clara, an AI email assistant. The user is viewing an email from ${email.sender} with subject: "${email.subject}". Body: ${email.body || email.original || ''}. Help the user manage this email. Respond in Korean.`
       : 'You are Clara, an AI email assistant. Help the user manage their emails. Respond in Korean.';
 
-    const res = await fetch('/api/chat', {
+    const res = await _claraChatFetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 1024, system: systemPrompt, messages: [{ role: 'user', content: txt }] })
@@ -5646,7 +5648,7 @@ async function cpSendInt() {
     }
     const data = await res.json();
     const reply = (data.content||[]).map(c => c.text || '').join('') || '죄송합니다, 응답을 받지 못했습니다.';
-    typingEl.querySelector('.cp-bubble').innerHTML = reply.replace(/\n/g,'<br>');
+    typingEl.querySelector('.cp-bubble').innerHTML = escHtml(reply).replace(/\n/g,'<br>');
   } catch(e) {
     typingEl.querySelector('.cp-bubble').innerHTML = '<span style="color:#dc2626;font-size:12px">오류: ' + (e.message || e) + '</span>';
   } finally {
@@ -5741,7 +5743,7 @@ async function cpSendPanel(panelId) {
   // 사용자 메시지
   const userDiv = document.createElement('div');
   userDiv.className = 'cp-msg cp-user';
-  userDiv.innerHTML = `<div class="cp-bubble cp-user-bubble">${txt}</div>`;
+  userDiv.innerHTML = `<div class="cp-bubble cp-user-bubble">${escHtml(txt)}</div>`;
   msgs_el.appendChild(userDiv);
   msgs_el.scrollTop = 99999;
 
@@ -5758,7 +5760,7 @@ async function cpSendPanel(panelId) {
   try {
     const email = info.emailId ? EMAILS.find(x => x.id === info.emailId) : null;
     let ctx = email ? `\n\n현재 이메일: [${email.sender}] ${email.subject}\n${(email.original||email.body||'').slice(0,500)}` : '';
-    const res = await fetch('/api/chat', {
+    const res = await _claraChatFetch('/api/chat', {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({
         model:'claude-sonnet-4-20250514', max_tokens:1000,
@@ -5768,7 +5770,7 @@ async function cpSendPanel(panelId) {
     });
     const data = await res.json();
     const reply = data.content?.[0]?.text || '응답을 받지 못했습니다.';
-    aiDiv.querySelector('.cp-bubble').innerHTML = reply.replace(/\n/g,'<br>');
+    aiDiv.querySelector('.cp-bubble').innerHTML = escHtml(reply).replace(/\n/g,'<br>');
   } catch(e) {
     aiDiv.querySelector('.cp-bubble').innerHTML = `<span style="color:#dc2626">${e.message}</span>`;
   }
@@ -5983,6 +5985,7 @@ async function sendInlineCompose() {
       showToast('전송 실패: ' + (data.detail || data.error || res.status));
       return;
     }
+    window.dispatchEvent(new Event('clara-source-changed'));
     closeInlineCompose();
     const t = document.getElementById('send-toast');
     if (t) { t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 3000); }
@@ -6391,7 +6394,7 @@ async function toggleCpMicInt() {
       (data.events || []).forEach(function(e) {
         var cal = _calCalendars.find(function(c){ return c.id === e.calendarId; });
         CAL_EVENTS.push({
-          id: e.id, calendarId: e.calendarId,
+          id: e.id, calendarId: e.calendarId, recurringEventId: e.recurringEventId,
           date: e.date, endDate: e.endDate || e.date, title: e.title,
           allDay: !!e.allDay,
           startMin: e.startMin, endMin: e.endMin,
@@ -6593,9 +6596,15 @@ async function toggleCpMicInt() {
         </div>
         ${ev.loc ? `<div class="cal-ep-row"><svg viewBox="0 0 24 24" stroke="currentColor"><path d="M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0"/><circle cx="12" cy="10" r="3"/></svg><span class="cal-ep-text">${ev.loc}</span></div>` : ''}
         ${ev.detail ? `<div class="cal-ep-row"><svg viewBox="0 0 24 24" stroke="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><span class="cal-ep-text">${ev.detail}</span></div>` : ''}
-        <div><span class="cal-ep-tag" style="background:${color}">${ev.type.charAt(0).toUpperCase()+ev.type.slice(1)}</span></div>
+        <div><span class="cal-ep-tag" style="background:${color}">${escHtml((ev.type || 'meeting').charAt(0).toUpperCase()+(ev.type || 'meeting').slice(1))}</span></div>
       </div>`;
 
+    if (ev.calendarId && ev.id) {
+      var knowledgeBtn = document.createElement('button');
+      knowledgeBtn.className = 'cal-ep-hbtn'; knowledgeBtn.textContent = '지식 연결';
+      knowledgeBtn.onclick = function(){ window.ClaraOntology?.openEvent(ev.calendarId, ev.recurringEventId || ev.id); };
+      popup.querySelector('.cal-ep-header').prepend(knowledgeBtn);
+    }
     popup.classList.remove('show');
     document.body.appendChild(popup);
     // Position near trigger
@@ -7128,6 +7137,7 @@ async function toggleCpMicInt() {
       })
     }).then(function(res) {
       if (!res.ok) { showToast('⚠ 캘린더 저장 실패 — 화면에만 임시로 표시됩니다.'); return; }
+      window.dispatchEvent(new Event('clara-source-changed'));
       _calFetchEvents(); // 서버 데이터로 다시 동기화
     }).catch(function() { showToast('⚠ 캘린더 저장 실패 — 화면에만 임시로 표시됩니다.'); });
 
@@ -7820,5 +7830,7 @@ async function toggleCpMicInt() {
   });
 })();
 </script>
+<script src="/ontology-bridge.js"></script>
+<script type="module" src="/ontology-client.mjs"></script>
 </body>
 </html>
