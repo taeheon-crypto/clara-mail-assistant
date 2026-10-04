@@ -2877,6 +2877,10 @@ function _avatarInitial(sender) {
   return s ? s.charAt(0).toUpperCase() : '?';
 }
 
+function escHtml(s) {
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 function _jsIdLit(v) {
   // id를 onclick="..." (이중따옴표 속성) 안에 안전하게 삽입하기 위한 JS 리터럴 문자열 생성
   if (typeof v === 'number') return String(v);
@@ -2940,11 +2944,13 @@ function renderList() {
     return;
   }
 
+  // 실제 Gmail 제목/발신자에 <, >, & 같은 문자가 그대로 올 수 있어서 반드시 이스케이프 후 삽입 (안 하면 레이아웃이 깨지거나 HTML 주입 위험)
   const highlight = (text, q) => {
-    if (!q) return text;
-    const idx = text.toLowerCase().indexOf(q);
-    if (idx === -1) return text;
-    return text.slice(0, idx) + `<mark style="background:#fef08a;border-radius:2px;padding:0 1px">${text.slice(idx, idx + q.length)}</mark>` + text.slice(idx + q.length);
+    const safe = escHtml(text);
+    if (!q) return safe;
+    const idx = safe.toLowerCase().indexOf(q.toLowerCase());
+    if (idx === -1) return safe;
+    return safe.slice(0, idx) + `<mark style="background:#fef08a;border-radius:2px;padding:0 1px">${safe.slice(idx, idx + q.length)}</mark>` + safe.slice(idx + q.length);
   };
 
   document.getElementById('el-scroll').innerHTML = sorted.map(e => {
