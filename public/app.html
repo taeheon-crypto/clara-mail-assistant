@@ -1972,21 +1972,22 @@ function refreshAiMode() {
   var calOv = document.getElementById('cal-overlay');
   if (calOv) { calOv.style.opacity='0'; setTimeout(function(){ calOv.style.display='none'; }, 300); }
 
-  // AI 모드 상태 강제 설정
-  if (!_aiMode) {
-    _aiMode = true;
-    document.querySelectorAll('.sb-icon').forEach(function(x){ x.classList.remove('active'); });
-    var inboxBtn = document.getElementById('nl-inbox');
-    if (inboxBtn) inboxBtn.classList.remove('active');
-    var elE = document.querySelector('.el');
-    if (elE) { elE.style.maxWidth='0'; elE.style.minWidth='0'; elE.style.opacity='0'; elE.style.pointerEvents='none'; }
-    var mailV = document.getElementById('fp-mail-view');
-    var aiV = document.getElementById('fp-ai-view');
-    if (mailV) mailV.style.display='none';
-    if (aiV) { aiV.style.display='flex'; aiV.style.opacity='1'; }
-    var ftb = document.getElementById('fp-ai-toggle-btn');
-    if (ftb) ftb.style.display='flex';
-  }
+  // AI 모드 상태 강제 설정 — _aiMode가 이미 true여도(어긋난 상태 포함) 항상 다시 강제 적용해야
+  // "어떤 상태에서도 AI 홈으로" 라는 함수 의도가 성립함. 기존엔 !_aiMode 조건에 걸려 있어서
+  // _aiMode 플래그만 true고 실제 DOM은 안 접힌 상태로 꼬이면 영원히 복구가 안 됐음.
+  ++_aiTransGen; // 오래된 enter/exit 애니메이션 콜백이 뒤늦게 끼어들지 못하게 무효화
+  _aiMode = true;
+  document.querySelectorAll('.sb-icon').forEach(function(x){ x.classList.remove('active'); });
+  var inboxBtn = document.getElementById('nl-inbox');
+  if (inboxBtn) inboxBtn.classList.remove('active');
+  var elE = document.querySelector('.el');
+  if (elE) { elE.style.transition=''; elE.style.transform=''; elE.style.maxWidth='0'; elE.style.minWidth='0'; elE.style.opacity='0'; elE.style.pointerEvents='none'; }
+  var mailV = document.getElementById('fp-mail-view');
+  var aiV = document.getElementById('fp-ai-view');
+  if (mailV) { mailV.style.transition=''; mailV.style.display='none'; }
+  if (aiV) { aiV.style.transition=''; aiV.style.display='flex'; aiV.style.opacity='1'; }
+  var ftb = document.getElementById('fp-ai-toggle-btn');
+  if (ftb) ftb.style.display='flex';
   // 사이드바 펼치기
   if (typeof _aiSidebarCollapsed !== 'undefined' && _aiSidebarCollapsed) {
     _aiSidebarCollapsed = false;
