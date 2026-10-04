@@ -143,17 +143,29 @@ export async function GET(req: Request) {
   const ids: { id: string }[] = listData.messages || [];
   const nextPageToken: string | null = listData.nextPageToken || null;
 
-  const messages = await Promise.all(
-    ids.map(async (m) => {
-      const r = await fetch(
-        `https://gmail.googleapis.com/gmail/v1/users/me/messages/${m.id}?format=full`,
-        { headers: { Authorization: `Bearer ${accessToken}` } }
-      );
-      return r.json();
-    })
-  );
+  // 한꺼번에 너무 많이 병렬 요청하면 Gmail API 레이트리밋(429)에 걸려 일부 메일이 깨져서 옴 → 작은 배치로 나눠서 순차 처리
+  async function fetchOne(id: string, attempt = 0): Promise<any | null> {
+    const r = await fetch(
+      `https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=full`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+    if (r.ok) return r.json();
+    if (r.status === 429 && attempt < 2) {
+      await new Promise((res) => setTimeout(res, 400 * (attempt + 1)));
+      return fetchOne(id, attempt + 1);
+    }
+    return null; // 재시도해도 실패하면 이 메일은 건너뜀 (깨진 행 대신 그냥 제외)
+  }
 
-  const emails = messages.filter(Boolean).map((msg) => {
+  const BATCH_SIZE = 8;
+  const messages: any[] = [];
+  for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+    const batch = ids.slice(i, i + BATCH_SIZE);
+    const results = await Promise.all(batch.map((m) => fetchOne(m.id)));
+    messages.push(...results);
+  }
+
+  const emails = messages.filter((msg) => msg && msg.payload).map((msg) => {
     const headers = msg.payload?.headers || [];
     const subject = getHeader(headers, "Subject") || "(제목 없음)";
     const from = getHeader(headers, "From");

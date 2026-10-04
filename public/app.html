@@ -1354,8 +1354,13 @@ function _gmailIcon(s) {
   return 'star';
 }
 function _gmailShortDate(dateStr) {
-  try { const d=new Date(dateStr); const m=d.getMonth()+1,dd=d.getDate(); return (m<10?'0'+m:m)+'/'+(dd<10?'0'+dd:dd); }
-  catch(e) { return ''; }
+  try {
+    if (!dateStr) return '';
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return '';
+    const m = d.getMonth() + 1, dd = d.getDate();
+    return (m < 10 ? '0' + m : m) + '/' + (dd < 10 ? '0' + dd : dd);
+  } catch (e) { return ''; }
 }
 
 let _gmailNextPageToken = null;
