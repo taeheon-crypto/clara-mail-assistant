@@ -2916,7 +2916,8 @@ function renderEmailBody(e) {
     const iframe = document.createElement('iframe');
     // allow-same-origin: 부모가 iframe 내부 높이를 측정하기 위해 필요 (allow-scripts는 안 줌 → 메일 속 스크립트는 절대 실행 안 됨, 안전)
     iframe.setAttribute('sandbox', 'allow-same-origin allow-popups allow-popups-to-escape-sandbox');
-    iframe.style.cssText = 'width:100%;border:none;display:block;min-height:40px';
+    // 높이 계산 전까지 숨겨둬서 '작게 떴다가 커지는' 깜빡임 방지
+    iframe.style.cssText = 'width:100%;border:none;display:block;min-height:40px;visibility:hidden';
     container.appendChild(iframe);
     const gmailCss = '<style>'
       + 'html,body{margin:0;padding:0}'
@@ -2932,12 +2933,13 @@ function renderEmailBody(e) {
         const doc = iframe.contentWindow.document;
         const resize = function() { iframe.style.height = (doc.documentElement.scrollHeight + 16) + 'px'; };
         resize();
+        iframe.style.visibility = 'visible';
         doc.querySelectorAll('img').forEach(function(img) { img.addEventListener('load', resize); img.addEventListener('error', resize); });
         setTimeout(resize, 150);
         setTimeout(resize, 400);
         setTimeout(resize, 900);
         doc.querySelectorAll('a').forEach(function(a) { a.setAttribute('target', '_blank'); a.setAttribute('rel', 'noopener noreferrer'); });
-      } catch (err) { /* 샌드박스 보호로 접근 제한될 수 있음 — 무시 */ }
+      } catch (err) { iframe.style.visibility = 'visible'; /* 샌드박스 보호로 접근 제한될 수 있음 — 무시 */ }
     };
   } else {
     const origBody = e.original ? e.original : e.body;
