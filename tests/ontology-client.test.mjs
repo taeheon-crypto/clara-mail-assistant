@@ -11,6 +11,7 @@ test('UI indexes both sources, stores confirmed links, restores them, and isolat
   let requests = 0, bootId = 0;
   async function boot(email) {
     const w = new Window({ url: 'https://clara.test/app.html' }); windows.push(w);
+    let occurrenceAttempts = 0;
     w.document.body.innerHTML = '<div class="sb-nav"></div><textarea id="cp-input-int"></textarea><button id="cp-send-int"></button>';
     for (const key of ['window', 'document', 'navigator', 'CustomEvent', 'Event']) Object.defineProperty(globalThis, key, { value: w[key], configurable: true });
     globalThis.indexedDB = indexedDB;
@@ -21,9 +22,15 @@ test('UI indexes both sources, stores confirmed links, restores them, and isolat
       if (url === '/api/auth/session') return Response.json({ user: { email } });
       const source = new URL(url, 'https://clara.test').searchParams.get('source');
       const empty = email === 'other@example.com';
+      const paged = email === 'pages@example.com';
       if (source === 'calendars') return Response.json({ records: empty ? [] : [{ id: 'primary', name: 'Work' }], cursor: null });
+      if (source === 'occurrences') {
+        if (++occurrenceAttempts === 1) return Response.json({error:'quota_exceeded'},{status:429});
+        const cursor = new URL(url,'https://clara.test').searchParams.get('cursor');
+        return Response.json({records:[{id:cursor ? 'occ2' : 'occ1',calendarId:'primary',title:'Repeated',recurringEventId:'e1',start:{date:'2026-10-06'}}],cursor:cursor ? null : 'more'});
+      }
       if (source === 'events') return Response.json({ records: [{ id: 'e1', calendarId: 'primary', title: '[Atlas] Meeting', start: { date: '2026-10-05' }, attendees: [{ email: 'founder@example.com' }] }], cursor: null });
-      if (source === 'mail') return Response.json({ records: empty ? [] : [{ id: 'm1', subject: '[Atlas] plan', sender: 'Founder', senderEmail: 'founder@example.com', dateISO: '2026-10-04T10:00:00Z', body: 'Please review the deck.' }], cursor: null });
+      if (source === 'mail') return Response.json({ records: paged ? Array.from({length:125}, (_,i) => ({id:'page'+i,subject:'Paged '+i,senderEmail:'founder@example.com',dateISO:'2026-09-30T00:00:00Z'})) : empty ? [] : [{ id: 'm1', subject: '[Atlas] plan', sender: 'Founder', senderEmail: 'founder@example.com', dateISO: '2026-10-04T10:00:00Z', body: 'Please review the deck.' }], cursor: null });
       throw new Error(String(url));
     };
     await import('../public/ontology-client.mjs?test=' + ++bootId);
@@ -55,6 +62,25 @@ test('UI indexes both sources, stores confirmed links, restores them, and isolat
     assert.equal(isolated.counts.indexedMail, 0);
     assert.equal(isolated.nodes.length, 0);
     assert.ok(!JSON.stringify(isolated).includes('Founder'));
+    const paged = await boot('pages@example.com');
+    paged.ClaraOntology.open();
+    const result = await paged.ClaraOntology.query('메일 모두 알려줘');
+    assert.equal(result.total,125);
+    assert.equal(paged.document.querySelectorAll('#ont-list [data-node]').length,50);
+    paged.document.getElementById('ont-next').click();
+    assert.match(paged.document.getElementById('ont-page').textContent,/2\/3/);
+    paged.document.getElementById('ont-next').click();
+    assert.equal(paged.document.querySelectorAll('#ont-list [data-node]').length,25);
+    assert.equal(paged.document.getElementById('ont-next').disabled,true);
+    const evidence = await paged.ClaraOntology.fallback('메일 요약해줘','AI 빈 응답');
+    assert.match(evidence.text,/원본 근거 목록/);
+    assert.match(paged.document.getElementById('ont-status').textContent,/AI 빈 응답/);
+    const partialCalendar = await paged.ClaraOntology.query('2026-10-06 일정 목록');
+    assert.equal(partialCalendar.complete,false);
+    const resumedCalendar = await paged.ClaraOntology.query('2026-10-06 일정 목록');
+    assert.equal(resumedCalendar.complete,true); assert.equal(resumedCalendar.total,2);
+    assert.match(resumedCalendar.text,/Google에서 이 기간의 반복 일정/);
+
   } finally {
     globalThis.setTimeout = originalTimeout;
     for (const w of windows) await w.happyDOM.close();
@@ -71,21 +97,18 @@ test('every chat call uses the shared bridge and forwards current source identit
   await sandbox.window._claraChatFetch('/api/chat', { body: JSON.stringify({ messages: [{ role: 'user', content: 'Question' }] }) });
   assert.equal(sent.ontologyContext, 'shared-context');
 });
-test('weekly mail totals work without AI; incomplete snapshots are qualified and filtered questions go to AI', async () => {
+test('direct queries bypass AI and failed AI calls show consistent errors or evidence', async () => {
   let calls = 0;
-  const evidence = { timeZone: 'Asia/Seoul', weekStart: '2026-10-05', weekEndExclusive: '2026-10-12', counts: { indexedReceivedThisWeek: 7, indexedInboxThisWeek: 3, indexedMailThisWeek: 11 }, coverage: { mail: { status: 'syncing' } } };
-  const sandbox = { Response, window: { ClaraOntology: { context: async () => JSON.stringify(evidence) } }, fetch: async () => { calls++; return Response.json({}); } };
+  const sandbox = { Response, window: { ClaraOntology: {
+    query: async q => q === '지난주 온 메일 모두 알려줘' ? {kind:'list',text:'123건 원본 목록'} : null,
+    context: async () => 'shared-context',
+    fallback: async q => q === '메일 요약해줘' ? {text:'AI 생성 실패 · 원본 근거'} : null
+  } }, fetch: async () => { calls++; return Response.json({error:{message:'무료 AI 한도'}},{status:429}); } };
   vm.runInNewContext(await readFile(new URL('../public/ontology-bridge.js', import.meta.url), 'utf8'), sandbox);
-  async function ask(q) { return (await sandbox.window._claraChatFetch('/api/chat', { body: JSON.stringify({ messages: [{ role: 'user', content: q }] }) })).json(); }
-  const received = await ask('이번주 온 메일 몇개임?');
-  assert.match(received.content[0].text, /7통/);
-  assert.match(received.content[0].text, /전체 동기화가 끝나지 않아/);
-  assert.equal(calls, 0);
-  evidence.coverage.mail.status = 'complete';
-  assert.match((await ask('이번 주 받은편지함 몇 개?')).content[0].text, /3통/);
-  assert.match((await ask('이번주 전체 메일 몇개야?')).content[0].text, /11통/);
-  assert.equal(calls, 0);
-  await ask('김 대표에게 이번주 온 메일 몇개임?');
-  await ask('이번주 온 메일 몇개임? 중요한 것 요약해줘');
-  assert.equal(calls, 2);
+  const ask = q => sandbox.window._claraChatFetch('/api/chat', {body:JSON.stringify({messages:[{role:'user',content:q}]})});
+  assert.match((await (await ask('지난주 온 메일 모두 알려줘')).json()).content[0].text,/123건/);
+  assert.equal(calls,0);
+  assert.equal((await (await ask('메일 요약해줘')).json()).answerMode,'evidence');
+  await assert.rejects(ask('기타 질문'),/무료 AI 한도/);
+  assert.equal(calls,2);
 });
