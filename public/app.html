@@ -1361,6 +1361,7 @@ function _mapGmailEmail(e) {
     id: 'g_' + e.id, gmailId: e.id,
     gmailThreadId: e.threadId, senderEmail: e.senderEmail || '',
     messageIdHeader: e.messageIdHeader || '', referencesHeader: e.referencesHeader || '',
+    ccHeader: e.ccHeader || '', toHeader: e.toHeader || '',
     sender: e.sender, icon: _gmailIcon(e.sender),
     unread: e.unread, starred: e.starred,
     subject: e.subject, preview: e.preview,
@@ -1732,17 +1733,140 @@ function getCheckedIds() {
     .filter(Boolean);
 }
 
-function deleteCurrentEmail() {
-  if (selId == null) { showToast('No email selected'); return; }
-  const e = EMAILS.find(x => x.id === selId);
-  if (e) e.label = 'deleted';
+// Gmail 실제 액션 호출 공통 헬퍼 (trash/markRead/markUnread/important/unimportant/spam/block)
+async function _gmailAction(action, extra) {
+  const e = selId !== null ? EMAILS.find(x => x.id === selId) : null;
+  if (!e || !e.gmailId) { showToast('이 메일은 Gmail 연동 메일이 아닙니다.'); return null; }
+  try {
+    const res = await fetch('/api/gmail/action', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify(Object.assign({ action, gmailId: e.gmailId }, extra || {}))
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { showToast('실패: ' + (data.detail || data.error || res.status)); return null; }
+    return e;
+  } catch (err) {
+    showToast('실패: ' + err.message);
+    return null;
+  }
+}
+
+async function deleteCurrentEmail() {
+  const e = await _gmailAction('trash');
+  if (!e) return;
+  const idx = EMAILS.findIndex(x => x.id === e.id);
+  if (idx !== -1) EMAILS.splice(idx, 1);
   selId = null;
   const edView = document.getElementById('ed-view');
   if (edView) { edView.classList.remove('show'); edView.style.display = 'none'; edView.style.flex = ''; }
   const blank = document.getElementById('ed-blank');
   if (blank) blank.style.display = 'flex';
   renderList();
-  showToast('Email moved to Deleted');
+  showToast('메일을 휴지통으로 이동했습니다.');
+}
+
+async function markCurrentAsRead() {
+  const e = await _gmailAction('markRead');
+  if (!e) return;
+  e.unread = false;
+  renderList();
+  showToast('읽음으로 표시했습니다.');
+}
+
+async function markCurrentImportant() {
+  const e = await _gmailAction('important');
+  if (!e) return;
+  showToast('중요 메일로 표시했습니다.');
+}
+
+async function reportCurrentSpam() {
+  const e = await _gmailAction('spam');
+  if (!e) return;
+  const idx = EMAILS.findIndex(x => x.id === e.id);
+  if (idx !== -1) EMAILS.splice(idx, 1);
+  selId = null;
+  const edView = document.getElementById('ed-view');
+  if (edView) { edView.classList.remove('show'); edView.style.display = 'none'; edView.style.flex = ''; }
+  const blank = document.getElementById('ed-blank');
+  if (blank) blank.style.display = 'flex';
+  renderList();
+  showToast('스팸으로 신고했습니다.');
+}
+
+async function blockCurrentSender() {
+  const e = selId !== null ? EMAILS.find(x => x.id === selId) : null;
+  if (!e || !e.senderEmail) { showToast('발신자 이메일을 알 수 없습니다.'); return; }
+  if (!confirm((e.senderEmail) + ' 님을 차단하시겠습니까?\n앞으로 이 발신자의 메일은 자동으로 휴지통으로 이동합니다.')) return;
+  const res = await fetch('/api/gmail/action', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
+    body: JSON.stringify({ action: 'block', senderEmail: e.senderEmail })
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) { showToast('차단 실패: ' + (data.detail || data.error || res.status)); return; }
+  showToast(e.senderEmail + ' 님을 차단했습니다.');
+}
+
+function translateCurrentEmail() {
+  const e = selId !== null ? EMAILS.find(x => x.id === selId) : null;
+  if (!e) return;
+  const text = (e.body || '').slice(0, 2000);
+  const url = 'https://translate.google.com/?sl=auto&tl=ko&text=' + encodeURIComponent(text) + '&op=translate';
+  window.open(url, '_blank', 'noopener');
+}
+
+function openImmersiveReader() {
+  const e = selId !== null ? EMAILS.find(x => x.id === selId) : null;
+  if (!e) return;
+  const existing = document.getElementById('immersive-reader-modal');
+  if (existing) existing.remove();
+  const modal = document.createElement('div');
+  modal.id = 'immersive-reader-modal';
+  modal.style.cssText = 'position:fixed;inset:0;z-index:9999;background:#fdfaf3;overflow-y:auto';
+  modal.innerHTML = '<div style="max-width:720px;margin:0 auto;padding:60px 32px">'
+    + '<button onclick="document.getElementById(\'immersive-reader-modal\').remove()" style="position:fixed;top:20px;right:24px;width:36px;height:36px;border-radius:50%;border:1px solid #ddd;background:#fff;cursor:pointer;font-size:16px;color:#555">✕</button>'
+    + '<h1 style="font-size:28px;font-weight:700;color:#1a1a1a;margin-bottom:8px;line-height:1.3">' + escHtml(e.subject) + '</h1>'
+    + '<div style="font-size:15px;color:#888;margin-bottom:36px">' + escHtml(e.sender) + ' · ' + escHtml(e.date) + '</div>'
+    + '<div style="font-size:20px;line-height:1.9;color:#2a2a2a;white-space:pre-wrap;font-family:Georgia,serif">' + escHtml(e.body || '') + '</div>'
+    + '</div>';
+  document.body.appendChild(modal);
+}
+
+async function showOriginalEmail() {
+  const e = selId !== null ? EMAILS.find(x => x.id === selId) : null;
+  if (!e || !e.gmailId) { showToast('이 메일은 Gmail 연동 메일이 아닙니다.'); return; }
+  showToast('원본 불러오는 중...');
+  try {
+    const res = await fetch('/api/gmail/raw?gmailId=' + encodeURIComponent(e.gmailId), { credentials: 'same-origin' });
+    const text = await res.text();
+    const existing = document.getElementById('show-original-modal');
+    if (existing) existing.remove();
+    const modal = document.createElement('div');
+    modal.id = 'show-original-modal';
+    modal.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center';
+    modal.innerHTML = '<div style="width:min(820px,92vw);height:min(85vh,800px);background:#fff;border-radius:12px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.3)">'
+      + '<div style="display:flex;align-items:center;gap:10px;padding:12px 18px;border-bottom:1px solid #e5e7eb"><div style="flex:1;font-size:14px;font-weight:600">원본 보기</div><button onclick="document.getElementById(\'show-original-modal\').remove()" style="width:30px;height:30px;border:none;background:none;cursor:pointer;border-radius:50%;font-size:18px;color:#6b7280">✕</button></div>'
+      + '<pre style="flex:1;overflow:auto;margin:0;padding:16px 20px;font-size:11.5px;font-family:ui-monospace,Consolas,monospace;white-space:pre-wrap;word-break:break-all;color:#1f2937">' + escHtml(text) + '</pre>'
+      + '</div>';
+    document.body.appendChild(modal);
+    modal.addEventListener('click', function(ev) { if (ev.target === modal) modal.remove(); });
+  } catch (err) {
+    showToast('원본 불러오기 실패: ' + err.message);
+  }
+}
+
+function saveCurrentAsEml() {
+  const e = selId !== null ? EMAILS.find(x => x.id === selId) : null;
+  if (!e || !e.gmailId) { showToast('이 메일은 Gmail 연동 메일이 아닙니다.'); return; }
+  const a = document.createElement('a');
+  a.href = '/api/gmail/raw?gmailId=' + encodeURIComponent(e.gmailId) + '&download=1';
+  a.download = (e.subject || 'email') + '.eml';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
 }
 
 function bulkAction(action) {
@@ -5541,6 +5665,34 @@ function openInlineReply() {
   setTimeout(() => document.getElementById('inline-compose-body').focus(), 50);
 }
 
+let _currentUserEmail = '';
+fetch('/api/auth/session', { credentials: 'same-origin' })
+  .then(r => r.json()).then(d => { _currentUserEmail = (d && d.user && d.user.email || '').toLowerCase(); })
+  .catch(() => {});
+
+function _extractEmails(headerVal) {
+  if (!headerVal) return [];
+  const matches = headerVal.match(/[^\s<>,"]+@[^\s<>,"]+/g) || [];
+  return matches.map(m => m.toLowerCase());
+}
+
+function openInlineReplyAll() {
+  const e = selId !== null ? EMAILS.find(x => x.id === selId) : null;
+  if (!e) return;
+  _inlineMode = 'reply';
+  document.getElementById('inline-compose-label').textContent = '전체 답장';
+  const all = new Set();
+  if (e.senderEmail) all.add(e.senderEmail.toLowerCase());
+  _extractEmails(e.toHeader).forEach(x => all.add(x));
+  _extractEmails(e.ccHeader).forEach(x => all.add(x));
+  if (_currentUserEmail) all.delete(_currentUserEmail);
+  document.getElementById('inline-compose-to').value = Array.from(all).join(', ');
+  document.getElementById('inline-compose-icon').innerHTML = '<polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/>';
+  document.getElementById('inline-compose-body').innerHTML = '';
+  document.getElementById('inline-compose').classList.add('visible');
+  setTimeout(() => document.getElementById('inline-compose-body').focus(), 50);
+}
+
 function openInlineForward() {
   _inlineMode = 'forward';
   document.getElementById('inline-compose-label').textContent = '전달';
@@ -6751,65 +6903,51 @@ async function toggleCpMicInt() {
 
 <!-- 더보기 메뉴 (body 레벨) -->
 <div class="more-menu" id="more-menu" style="position:fixed;display:none;width:180px" onmousedown="event.stopPropagation()">
-                  <div class="more-menu-item" onclick="closeMoreMenu()">
+                  <div class="more-menu-item" onclick="openInlineReplyAll();closeMoreMenu()">
                     <svg viewBox="0 0 24 24" stroke="currentColor"><polyline points="15 17 20 12 15 7"/><path d="M4 18v-2a4 4 0 0 1 4-4h12"/></svg>
-                    More reply actions
-                    <svg class="more-menu-arrow" viewBox="0 0 24 24" stroke="currentColor"><path d="m9 18 6-6-6-6"/></svg>
+                    전체 답장
                   </div>
                   <div class="more-menu-item danger" onclick="deleteCurrentEmail();closeMoreMenu()">
                     <svg viewBox="0 0 24 24" stroke="currentColor"><path d="M3 6h18M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
-                    Delete
+                    삭제 (휴지통으로)
                   </div>
-                  <div class="more-menu-item" onclick="closeMoreMenu()">
+                  <div class="more-menu-item" onclick="markCurrentAsRead();closeMoreMenu()">
                     <svg viewBox="0 0 24 24" stroke="currentColor"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m9 11 3 3L22 4"/></svg>
-                    Mark as read
+                    읽음으로 표시
                   </div>
-                  <div class="more-menu-item" onclick="closeMoreMenu()">
+                  <div class="more-menu-item" onclick="markCurrentImportant();closeMoreMenu()">
                     <svg viewBox="0 0 24 24" stroke="currentColor"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" x2="4" y1="22" y2="15"/></svg>
-                    Flag
-                  </div>
-                  <div class="more-menu-item" onclick="closeMoreMenu()">
-                    <svg viewBox="0 0 24 24" stroke="currentColor"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
-                    Assign
+                    중요 표시
                   </div>
                   <div class="more-menu-divider"></div>
-                  <div class="more-menu-item" onclick="closeMoreMenu()">
+                  <div class="more-menu-item" onclick="reportCurrentSpam();closeMoreMenu()">
                     <svg viewBox="0 0 24 24" stroke="currentColor"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
-                    Report
-                    <svg class="more-menu-arrow" viewBox="0 0 24 24" stroke="currentColor"><path d="m9 18 6-6-6-6"/></svg>
+                    스팸 신고
                   </div>
-                  <div class="more-menu-item" onclick="closeMoreMenu()">
+                  <div class="more-menu-item" onclick="blockCurrentSender();closeMoreMenu()">
                     <svg viewBox="0 0 24 24" stroke="currentColor"><circle cx="12" cy="12" r="10"/><path d="m4.9 4.9 14.2 14.2"/></svg>
-                    Block
-                    <svg class="more-menu-arrow" viewBox="0 0 24 24" stroke="currentColor"><path d="m9 18 6-6-6-6"/></svg>
+                    발신자 차단
                   </div>
                   <div class="more-menu-divider"></div>
                   <div class="more-menu-item" onclick="window.print();closeMoreMenu()">
                     <svg viewBox="0 0 24 24" stroke="currentColor"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect width="12" height="8" x="6" y="14"/></svg>
-                    Print
+                    인쇄
                   </div>
-                  <div class="more-menu-item" onclick="closeMoreMenu()">
+                  <div class="more-menu-item" onclick="translateCurrentEmail();closeMoreMenu()">
                     <svg viewBox="0 0 24 24" stroke="currentColor"><path d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 0 1 6.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129"/></svg>
-                    Translate
+                    번역
                   </div>
-                  <div class="more-menu-item" onclick="closeMoreMenu()">
+                  <div class="more-menu-item" onclick="openImmersiveReader();closeMoreMenu()">
                     <svg viewBox="0 0 24 24" stroke="currentColor"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
-                    Immersive Reader
+                    몰입형 리더
                   </div>
-                  <div class="more-menu-item" onclick="closeMoreMenu()">
+                  <div class="more-menu-item" onclick="showOriginalEmail();closeMoreMenu()">
                     <svg viewBox="0 0 24 24" stroke="currentColor"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
-                    View
-                    <svg class="more-menu-arrow" viewBox="0 0 24 24" stroke="currentColor"><path d="m9 18 6-6-6-6"/></svg>
+                    원본 보기
                   </div>
-                  <div class="more-menu-item" onclick="closeMoreMenu()">
+                  <div class="more-menu-item" onclick="saveCurrentAsEml();closeMoreMenu()">
                     <svg viewBox="0 0 24 24" stroke="currentColor"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
-                    Save as
-                    <svg class="more-menu-arrow" viewBox="0 0 24 24" stroke="currentColor"><path d="m9 18 6-6-6-6"/></svg>
-                  </div>
-                  <div class="more-menu-divider"></div>
-                  <div class="more-menu-item" onclick="closeMoreMenu()">
-                    <svg viewBox="0 0 24 24" stroke="currentColor"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
-                    Advanced
+                    .eml로 저장
                   </div>
 </div>
 

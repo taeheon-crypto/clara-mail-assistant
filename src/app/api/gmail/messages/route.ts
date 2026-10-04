@@ -195,6 +195,8 @@ export async function GET(req: Request) {
     const senderEmail = senderEmailMatch ? senderEmailMatch[1] : from.trim();
     const messageIdHeader = getHeader(headers, "Message-ID");
     const referencesHeader = getHeader(headers, "References");
+    const ccHeader = getHeader(headers, "Cc");
+    const toHeader = getHeader(headers, "To");
     const body = getPlainBody(msg.payload);
     const rawHtml = getRawHtmlBody(msg.payload);
     const inlineImages = rawHtml ? getInlineImages(msg.payload) : [];
@@ -210,6 +212,8 @@ export async function GET(req: Request) {
       senderEmail,
       messageIdHeader,
       referencesHeader,
+      ccHeader,
+      toHeader,
       subject,
       preview: body.slice(0, 140),
       body,
