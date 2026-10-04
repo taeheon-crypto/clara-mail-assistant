@@ -9,6 +9,7 @@ const GMAIL_SCOPES = [
   "https://www.googleapis.com/auth/gmail.modify",
   "https://www.googleapis.com/auth/gmail.send",
   "https://www.googleapis.com/auth/gmail.settings.basic", // 발신자 차단(필터 생성)에 필요
+  "https://www.googleapis.com/auth/calendar", // 실제 Google Calendar 조회/생성
 ].join(" ");
 
 async function refreshAccessToken(token: any) {

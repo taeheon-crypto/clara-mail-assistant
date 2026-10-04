@@ -103,7 +103,8 @@ body{display:flex;flex-direction:row;align-items:center;justify-content:center;
 .fp-cal-item:hover{background:var(--bg-muted)}
 .fp-cal-dot{width:11px;height:11px;border-radius:3px;flex-shrink:0}
 .fp-cal-name{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.fp-cal-check{width:15px;height:15px;border-radius:3px;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:#fff}
+.fp-cal-check{width:15px;height:15px;border-radius:3px;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:#fff;cursor:pointer}
+.fp-cal-check.fp-cal-unchecked svg{display:none}
 .fp-cal-check svg{width:10px;height:10px;stroke:currentColor;stroke-width:3;fill:none}
 .fp-search-wrap{padding:10px 12px 8px;flex-shrink:0}
 .fp-search-box{display:flex;align-items:center;gap:8px;background:var(--bg);border:1px solid var(--border);border-radius:20px;padding:0 10px;height:32px}
@@ -900,30 +901,10 @@ body{display:flex;flex-direction:row;align-items:center;justify-content:center;
               </div>
               <div class="mini-cal-grid" id="mini-cal-grid"></div>
             </div>
-            <!-- 캘린더 목록 -->
-            <div class="mini-cal-list-inner">
+            <!-- 캘린더 목록 (실제 Google Calendar 목록으로 JS가 채움) -->
+            <div class="mini-cal-list-inner" id="mini-cal-list-inner">
             <div class="fp-cal-grp-hdr">MY CALENDARS</div>
-            <div class="fp-cal-item">
-              <div class="fp-cal-dot" style="background:#7c3aed"></div>
-              <span class="fp-cal-name">Taeheon Kim</span>
-              <div class="fp-cal-check" style="background:#7c3aed"><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg></div>
-            </div>
-            <div class="fp-cal-item">
-              <div class="fp-cal-dot" style="background:#10b981"></div>
-              <span class="fp-cal-name">Reminders</span>
-              <div class="fp-cal-check" style="background:#10b981"><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg></div>
-            </div>
-            <div class="fp-cal-item">
-              <div class="fp-cal-dot" style="background:#f59e0b"></div>
-              <span class="fp-cal-name">HKU MFin</span>
-              <div class="fp-cal-check" style="background:#f59e0b"><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg></div>
-            </div>
-            <div class="fp-cal-grp-hdr">OTHER CALENDARS</div>
-            <div class="fp-cal-item">
-              <div class="fp-cal-dot" style="background:#ef4444"></div>
-              <span class="fp-cal-name">Holidays in Korea</span>
-              <div class="fp-cal-check" style="background:#ef4444"><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg></div>
-            </div>
+            <div style="padding:8px;font-size:12px;color:#9ca3af">불러오는 중...</div>
             </div><!-- /mini-cal-list-inner -->
           </div>
 
@@ -6249,8 +6230,80 @@ async function toggleCpMicInt() {
   let calWeekOffset = 0; // 주 단위 오프셋 (0 = 이번 주)
   var _calInited = false;
 
-  // Events data — tied to email schedule
+  // Events data — 실제 Google Calendar에서 불러옴
   const CAL_EVENTS = [];
+  var _calCalendars = [];
+  var _calDataLoaded = false;
+
+  function _calRenderSidebarList() {
+    var container = document.getElementById('mini-cal-list-inner');
+    if (!container) return;
+    var mine = _calCalendars.filter(function(c){ return c.primary; });
+    var others = _calCalendars.filter(function(c){ return !c.primary; });
+    function itemHtml(c) {
+      var color = c.backgroundColor || '#7c3aed';
+      return '<div class="fp-cal-item" data-cal-id="' + escHtml(c.id) + '">'
+        + '<div class="fp-cal-dot" style="background:' + color + '"></div>'
+        + '<span class="fp-cal-name">' + escHtml(c.summary) + '</span>'
+        + '<div class="fp-cal-check' + (c.selected ? '' : ' fp-cal-unchecked') + '" style="background:' + (c.selected ? color : '#e5e7eb') + '" onclick="event.stopPropagation();_calToggleCalendar(\'' + c.id.replace(/'/g,"\\'") + '\')"><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg></div>'
+        + '</div>';
+    }
+    var html = '<div class="fp-cal-grp-hdr">MY CALENDARS</div>' + mine.map(itemHtml).join('');
+    if (others.length) html += '<div class="fp-cal-grp-hdr">OTHER CALENDARS</div>' + others.map(itemHtml).join('');
+    container.innerHTML = html || '<div style="padding:8px;font-size:12px;color:#9ca3af">캘린더가 없습니다</div>';
+  }
+
+  window._calToggleCalendar = function(calId) {
+    var c = _calCalendars.find(function(x){ return x.id === calId; });
+    if (!c) return;
+    c.selected = !c.selected;
+    _calRenderSidebarList();
+    _calFetchEvents();
+  };
+
+  async function _calFetchCalendars() {
+    try {
+      const res = await fetch('/api/calendar/calendars', { credentials: 'same-origin' });
+      if (!res.ok) return;
+      const data = await res.json();
+      _calCalendars = data.calendars || [];
+      _calRenderSidebarList();
+    } catch (err) { console.error('calendar list error', err); }
+  }
+
+  async function _calFetchEvents() {
+    try {
+      var selectedIds = _calCalendars.filter(function(c){ return c.selected; }).map(function(c){ return c.id; });
+      if (!selectedIds.length) selectedIds = ['primary'];
+      var now = new Date();
+      var timeMin = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString();
+      var timeMax = new Date(now.getFullYear(), now.getMonth() + 2, 0).toISOString();
+      const res = await fetch('/api/calendar/events?timeMin=' + encodeURIComponent(timeMin) + '&timeMax=' + encodeURIComponent(timeMax) + '&calendarIds=' + encodeURIComponent(selectedIds.join(',')), { credentials: 'same-origin' });
+      if (!res.ok) return;
+      const data = await res.json();
+      CAL_EVENTS.length = 0;
+      (data.events || []).forEach(function(e) {
+        var cal = _calCalendars.find(function(c){ return c.id === e.calendarId; });
+        CAL_EVENTS.push({
+          id: e.id, calendarId: e.calendarId,
+          date: e.date, title: e.title,
+          startMin: e.startMin, endMin: e.endMin,
+          time: '', endTime: '',
+          loc: e.loc, detail: e.detail,
+          color: cal ? cal.backgroundColor : null
+        });
+      });
+      renderWeek();
+      try { renderMain(); } catch (err) {}
+    } catch (err) { console.error('calendar events error', err); }
+  }
+
+  async function _calLoadReal() {
+    if (_calDataLoaded) return;
+    _calDataLoaded = true;
+    await _calFetchCalendars();
+    await _calFetchEvents();
+  }
 
   // Type colors
   const TYPE_COLOR = {
@@ -6270,6 +6323,7 @@ async function toggleCpMicInt() {
       _calInited = true;
     }
     renderWeek();
+    _calLoadReal();
   }
 
   function eventsOnDay(y, m, d) {
@@ -6356,7 +6410,7 @@ async function toggleCpMicInt() {
       popup.className = 'cal-event-popup';
       document.body.appendChild(popup);
     }
-    const color = TYPE_COLOR[ev.type] || '#6c35de';
+    const color = ev.color || TYPE_COLOR[ev.type] || '#6c35de';
     const dateObj = new Date(ev.date + 'T12:00:00');
     const dateStr = dateObj.toLocaleString('en-US', {weekday:'long', month:'long', day:'numeric', year:'numeric'});
 
@@ -6547,7 +6601,7 @@ async function toggleCpMicInt() {
         var heightPct = durMin / totalMin * 100;
 
         var chip = document.createElement('div');
-        var color = TYPE_COLOR[ev.type] || '#6c35de';
+        var color = ev.color || TYPE_COLOR[ev.type] || '#6c35de';
         chip.style.cssText = 'position:absolute;left:2px;right:2px;top:'+topPct.toFixed(2)+'%;height:'+heightPct.toFixed(2)+'%;min-height:20px;background:'+color+';color:#fff;font-size:10.5px;font-weight:600;padding:4px 6px;border-radius:4px;z-index:5;cursor:pointer;overflow:hidden;box-sizing:border-box;';
         chip.innerHTML = '<div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:11px;font-weight:700">' + ev.title + '</div>'
           + (durMin >= 45 ? '<div style="font-size:10px;opacity:.85;margin-top:1px">' + (ev.time||'') + (ev.endTime ? ' – ' + ev.endTime : '') + '</div>' : '');
@@ -6887,25 +6941,34 @@ async function toggleCpMicInt() {
     // 탭 확인 (일정 vs 할일)
     var isTodo = document.getElementById('cal-body-todo')?.style.display !== 'none';
     var type = isTodo ? 'personal' : 'work';
+    var locVal = document.getElementById('cal-location')?.value || '';
+    var detailVal = document.getElementById('cal-desc')?.value || document.getElementById('cal-todo-desc')?.value || '';
 
-    // CAL_EVENTS에 추가
+    // 낙관적으로 먼저 화면에 반영
     CAL_EVENTS.push({
-      date: dateVal,
-      title: title,
-      type: type,
-      time: timeStr,
-      endTime: endTimeStr,
-      startMin: th * 60 + tm,
-      endMin: eth * 60 + etm,
-      loc: document.getElementById('cal-location')?.value || '',
-      detail: document.getElementById('cal-desc')?.value || document.getElementById('cal-todo-desc')?.value || ''
+      date: dateVal, title: title, type: type,
+      time: timeStr, endTime: endTimeStr,
+      startMin: th * 60 + tm, endMin: eth * 60 + etm,
+      loc: locVal, detail: detailVal
     });
-
     document.getElementById('cal-new-event-modal')?.remove();
-
-    // 두 뷰 모두 리렌더
     try { renderMain(); } catch(e) {}
     try { renderWeek(); } catch(e) {}
+
+    // 실제 Google Calendar에 생성
+    fetch('/api/calendar/events', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({
+        title: title, date: dateVal,
+        startTime: timeVal, endTime: endVal,
+        location: locVal, description: detailVal
+      })
+    }).then(function(res) {
+      if (!res.ok) { showToast('⚠ 캘린더 저장 실패 — 화면에만 임시로 표시됩니다.'); return; }
+      _calFetchEvents(); // 서버 데이터로 다시 동기화
+    }).catch(function() { showToast('⚠ 캘린더 저장 실패 — 화면에만 임시로 표시됩니다.'); });
 
     // 토스트
     var t = document.getElementById('send-toast');
