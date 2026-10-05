@@ -95,8 +95,17 @@ export async function POST(req: Request) {
     if (typeof text !== 'string' || !text.trim()) return NextResponse.json({ error: { message: 'AI가 빈 응답을 반환했습니다. 다시 시도해 주세요.' } }, { status: 502, headers });
     if (agent) {
       try {
+        const known = new Set<string>(body.agentTrace.flatMap((step: { output?: { nodes?: { id: string }[] } }) => (step.output?.nodes || []).map(n => n.id)));
+        const allowedSources = [...known].filter(id => /^(mail|event):/.test(id));
         const parse = (candidate: string) => {
-          try { return validateDecision(JSON.parse(candidate.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, ''))); }
+          try {
+            const result = validateDecision(JSON.parse(candidate.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')));
+            if ('error' in result || result.decision.action !== 'answer') return result;
+            const cited = [...result.decision.text.matchAll(/\[((?:mail|event):[^\]\n]+)\]/g)].map(m => m[1]);
+            if (cited.some(id => !known.has(id))) return { error: '답변의 인용이 조회 근거와 일치하지 않습니다.', code: 'unknown_citation' };
+            if (allowedSources.length && !cited.length) return { error: '답변에 원본 근거 인용이 없습니다.', code: 'missing_citation' };
+            return result;
+          }
           catch { return { error: 'AI 응답 JSON 형식을 확인하지 못했습니다.', code: 'invalid_json' }; }
         };
         let checked = parse(text);
@@ -106,7 +115,7 @@ export async function POST(req: Request) {
           if (deadline - Date.now() > 1500) {
             const repaired = await fetch('https://openrouter.ai/api/v1/chat/completions', {
               method: 'POST', signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())), headers: requestHeaders,
-              body: JSON.stringify({ models: MODELS, max_tokens: 4096, response_format: { type: 'json_object' }, messages: [...messages, { role: 'assistant', content: text.slice(0, 20000) }, { role: 'system', content: AGENT_REPAIR_SYSTEM + '\nValidation code: ' + checked.code }] }),
+              body: JSON.stringify({ models: MODELS, max_tokens: 4096, response_format: { type: 'json_object' }, messages: [...messages, { role: 'assistant', content: text.slice(0, 20000) }, { role: 'system', content: AGENT_REPAIR_SYSTEM + '\nValidation code: ' + checked.code + '\nFor final answers, cite only these EXACT source IDs in brackets, using source content that actually supports the claim. Do not cite person/project/ontology IDs as original sources: ' + JSON.stringify(allowedSources.slice(0, 180)) }] }),
             });
             const repairedData = await repaired.json().catch(() => null);
             const candidate = repairedData?.choices?.[0]?.message?.content;
@@ -116,11 +125,6 @@ export async function POST(req: Request) {
         if ('error' in checked) return NextResponse.json({ error: { message: 'AI가 도구 요청 형식을 맞추지 못했고 자동 복구도 완료하지 못했습니다. 조건을 바꾸지 말고 잠시 후 다시 시도해 주세요.', code: 'agent_invalid_decision', validationCode: checked.code } }, { status: 502, headers });
         const decision = checked.decision;
         if (decision.action === 'tool' && body.remainingTools === 0) return NextResponse.json({ error: { message: 'AI가 도구 조회 한도 안에 답변을 마무리하지 못했습니다.' } }, { status: 502, headers });
-        if (decision.action === 'answer') {
-          const known = new Set(body.agentTrace.flatMap((step: { output?: { nodes?: { id: string }[] } }) => (step.output?.nodes || []).map(n => n.id)));
-          const cited = [...decision.text.matchAll(/\[((?:mail|event):[^\]\n]+)\]/g)].map(m => m[1]);
-          if (cited.some(id => !known.has(id)) || [...known].some(id => /^(mail|event):/.test(String(id))) && !cited.length) return NextResponse.json({ error: { message: 'AI 답변의 원본 근거를 확인하지 못했습니다.' } }, { status: 502, headers });
-        }
         return NextResponse.json({ decision, knowledgeSource: 'ontology-agent' }, { headers });
       } catch { return NextResponse.json({ error: { message: 'AI가 올바른 에이전트 응답을 반환하지 못했습니다.' } }, { status: 502, headers }); }
     }

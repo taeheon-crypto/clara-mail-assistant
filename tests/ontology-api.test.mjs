@@ -136,6 +136,17 @@ test('agent repairs an invalid tool decision once before returning it to the exe
   assert.match(sent[1].messages.at(-1).content, /aggregate_direction_required/);
 });
 
+test('final answers with missing or invented citations are repaired against exact returned sources', async () => {
+  for (const first of ['Most frequent person is Founder.', 'Founder [mail:invented]']) {
+    const sent = [];
+    const r = await route('chat', { fetch: async (_url, opts) => { sent.push(JSON.parse(opts.body)); return Response.json({ choices: [{ message: { content: JSON.stringify({ action: 'answer', text: sent.length === 1 ? first : 'Founder [mail:real]' }) } }] }); } });
+    const response = await r.POST(new Request('https://clara.test/api/chat', { method: 'POST', body: JSON.stringify({ mode: 'ontology_agent', remainingTools: 4, agentContext: { accountEmail: 'me@example.com', timeZone: 'Asia/Seoul' }, agentTrace: [{ output: { nodes: [{ id: 'mail:real' }] } }], messages: [{ role: 'user', content: 'Who do I exchange most emails with?' }] }) }));
+    assert.equal(response.status, 200); assert.equal(sent.length, 2);
+    assert.equal((await response.json()).decision.text, 'Founder [mail:real]');
+    assert.match(sent[1].messages.at(-1).content, /mail:real/);
+  }
+});
+
 test('malformed JSON is repaired; persistent invalid decisions never reach an executor', async () => {
   const request = () => new Request('https://clara.test/api/chat', { method: 'POST', body: JSON.stringify({ mode: 'ontology_agent', remainingTools: 6, agentContext: { accountEmail: 'me@example.com', timeZone: 'Asia/Seoul' }, agentTrace: [], messages: [{ role: 'user', content: 'Hello' }] }) });
   let calls = 0;
