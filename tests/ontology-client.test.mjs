@@ -5,10 +5,10 @@ import vm from 'node:vm';
 import { Window } from 'happy-dom';
 import { indexedDB } from 'fake-indexeddb';
 
-test('UI indexes both sources, stores confirmed links, restores them, and isolates accounts', async () => {
+test('headless ontology indexes both sources, restores links, isolates accounts and refreshes automatically', async () => {
   const originalTimeout = globalThis.setTimeout;
   const windows = [];
-  let requests = 0, bootId = 0;
+  let requests = 0, bootId = 0, revised = false, releaseRefresh;
   async function boot(email) {
     const w = new Window({ url: 'https://clara.test/app.html' }); windows.push(w);
     let occurrenceAttempts = 0;
@@ -43,6 +43,7 @@ test('UI indexes both sources, stores confirmed links, restores them, and isolat
         return Response.json({records:[{id:cursor ? 'occ2' : 'occ1',calendarId:'primary',title:'Repeated',recurringEventId:'e1',start:{date:'2026-10-06'}}],cursor:cursor ? null : 'more'});
       }
       if (source === 'events') return Response.json({ records: [{ id: 'e1', calendarId: 'primary', title: '[Atlas] Meeting', start: { date: '2026-10-05' }, attendees: [{ email: 'founder@example.com' }] }], cursor: null });
+      if (source === 'mail' && paged && revised) { await new Promise(resolve => { releaseRefresh = resolve; }); return Response.json({ records: [{ id: 'new-page', subject: 'Updated mail', senderEmail: 'founder@example.com', dateISO: '2026-10-05T00:00:00Z', body: 'New source' }], cursor: null }); }
       if (source === 'mail') return Response.json({ records: paged ? Array.from({length:125}, (_,i) => ({id:'page'+i,subject:'Paged '+i,senderEmail:'founder@example.com',dateISO:'2026-09-30T00:00:00Z'})) : empty ? [] : [{ id: 'm1', subject: '[Atlas] plan', sender: 'Founder', senderEmail: 'founder@example.com', dateISO: '2026-10-04T10:00:00Z', body: 'Please review the deck.' }], cursor: null });
       throw new Error(String(url));
     };
@@ -58,14 +59,13 @@ test('UI indexes both sources, stores confirmed links, restores them, and isolat
   }
   try {
     const first = await boot('me@example.com');
-    first.ClaraOntology.open();
-    assert.ok(first.document.getElementById('ontology-dialog').open);
-    first.document.querySelector('[data-node="mail:m1"]').click();
-    assert.match(first.document.getElementById('ont-detail').textContent, /Founder/);
-    first.document.getElementById('ont-project').click();
-    await new Promise(resolve => originalTimeout(resolve, 20));
+    assert.equal(first.document.getElementById('ontology-dialog'), null);
+    assert.equal(first.document.getElementById('nl-ontology'), null);
+    assert.equal(first.ClaraOntology.open, undefined);
     let context = JSON.parse(await first.ClaraOntology.context('Atlas'));
-    assert.equal(context.nodes.find(n => n.id === 'project:atlas').properties.status, 'confirmed');
+    const fixtureDb = await new Promise((resolve, reject) => { const req = indexedDB.open('clara-ontology-v1', 1); req.onsuccess = () => resolve(req.result); req.onerror = reject; });
+    await new Promise((resolve, reject) => { const tx = fixtureDb.transaction('accounts', 'readwrite'); const store = tx.objectStore('accounts'); const req = store.get('me@example.com'); req.onsuccess = () => { const saved = req.result; saved.manual.nodes.push({ id: 'project:atlas', type: 'Project', label: 'Atlas' }); saved.manual.edges.push({ from: 'mail:m1', to: 'project:atlas' }); store.put(saved, 'me@example.com'); }; tx.oncomplete = resolve; tx.onerror = reject; });
+    fixtureDb.close();
     const before = requests;
     const restored = await boot('me@example.com');
     assert.equal(requests, before + 1); // Complete index loads from IndexedDB, not Google.
@@ -77,18 +77,10 @@ test('UI indexes both sources, stores confirmed links, restores them, and isolat
     assert.equal(isolated.nodes.length, 0);
     assert.ok(!JSON.stringify(isolated).includes('Founder'));
     const paged = await boot('pages@example.com');
-    paged.ClaraOntology.open();
     const result = await paged.ClaraOntology.query('메일 모두 알려줘');
     assert.equal(result.total,125);
-    assert.equal(paged.document.querySelectorAll('#ont-list [data-node]').length,50);
-    paged.document.getElementById('ont-next').click();
-    assert.match(paged.document.getElementById('ont-page').textContent,/2\/3/);
-    paged.document.getElementById('ont-next').click();
-    assert.equal(paged.document.querySelectorAll('#ont-list [data-node]').length,25);
-    assert.equal(paged.document.getElementById('ont-next').disabled,true);
     const evidence = await paged.ClaraOntology.fallback('메일 요약해줘','AI 빈 응답');
     assert.match(evidence.text,/원본 근거 목록/);
-    assert.match(paged.document.getElementById('ont-status').textContent,/AI 빈 응답/);
     const partialCalendar = await paged.ClaraOntology.query('2026-10-06 일정 목록');
     assert.equal(partialCalendar.complete,false);
     const resumedCalendar = await paged.ClaraOntology.query('2026-10-06 일정 목록');
@@ -98,16 +90,9 @@ test('UI indexes both sources, stores confirmed links, restores them, and isolat
     const rank = await paged.ClaraOntology.query('나랑 최근에 가장 많이 메일 주고받은 사람 누구임?');
     assert.equal(rank.kind, 'aggregate'); assert.equal(rank.groups[0].count, 125);
     assert.equal(rank.groups[0].email, 'founder@example.com');
-    assert.equal(paged.document.querySelectorAll('#ont-list [data-node]').length, 50);
-    paged.document.getElementById('ont-next').click();
-    paged.document.getElementById('ont-next').click();
-    assert.equal(paged.document.querySelectorAll('#ont-list [data-node]').length, 25);
-    assert.match(paged.document.getElementById('ont-status').textContent, /125/);
     const limited = await paged.ClaraOntology.query('모델 한도 테스트');
     assert.match(limited.text, /무료 AI 한도/);
     assert.match(limited.text, /집계를 실행하지 않았습니다/);
-    assert.match(paged.document.getElementById('ont-status').textContent, /무료 AI 한도/);
-    assert.equal(paged.document.querySelectorAll('#ont-list [data-node]').length, 0);
     assert.equal((await paged.ClaraOntology.query('전체 메일 몇개야?')).total, 125);
     const agent = await paged.ClaraOntology.agent('이번엔 내가 신경써야 하는 게 뭔지 맥락을 보고 판단해봐', { messages: [{ role: 'assistant', content: '지원사업 자료를 확인하겠습니다.' }] });
     assert.equal(agent.kind, 'answer');
@@ -115,7 +100,23 @@ test('UI indexes both sources, stores confirmed links, restores them, and isolat
     assert.equal(JSON.parse(agent.trace[1].content).total, 125);
     assert.equal(JSON.parse(agent.trace[1].content).evidenceIsSample, false);
     assert.equal(JSON.parse(agent.trace[1].content).bodiesRead, 125);
-    assert.match(paged.document.getElementById('ont-page').textContent, /전체 125건/);
+
+    revised = true;
+    paged.dispatchEvent(new paged.CustomEvent('clara-source-changed'));
+    for (let i = 0; i < 100 && !releaseRefresh; i++) await new Promise(resolve => originalTimeout(resolve, 5));
+    assert.ok(releaseRefresh);
+    assert.equal(JSON.parse(await paged.ClaraOntology.context('mail')).counts.indexedMail, 125);
+    releaseRefresh();
+    for (let i = 0; i < 100; i++) {
+      const updated = JSON.parse(await paged.ClaraOntology.context('mail'));
+      if (updated.coverage.mail.status === 'complete' && updated.coverage.calendar.status === 'complete') break;
+      await new Promise(resolve => originalTimeout(resolve, 5));
+    }
+    const updated = JSON.parse(await paged.ClaraOntology.context('Updated mail'));
+    assert.equal(updated.counts.indexedMail, 1);
+    assert.ok(updated.nodes.some(n => n.id === 'mail:new-page'));
+    assert.equal((await paged.ClaraOntology.query('전체 일정 목록')).total, 1);
+    assert.equal(paged.document.getElementById('ontology-dialog'), null);
 
   } finally {
     globalThis.setTimeout = originalTimeout;

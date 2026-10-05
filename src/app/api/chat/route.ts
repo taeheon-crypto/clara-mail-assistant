@@ -36,7 +36,7 @@ export async function POST(req: Request) {
   const planning = body.mode === 'ontology_plan';
   const agent = body.mode === 'ontology_agent';
   if (agent && (!Array.isArray(body.agentTrace) || body.agentTrace.length > 6 || JSON.stringify(body.agentTrace).length > 100000 || !Number.isInteger(body.remainingTools) || body.remainingTools < 0 || body.remainingTools > 6)) return NextResponse.json({ error: { message: '에이전트 도구 기록 형식이 잘못되었습니다.' } }, { status: 400, headers });
-  if (agent && (typeof body.agentContext?.accountEmail !== 'string' || body.agentContext.accountEmail.toLowerCase() !== session.user?.email?.toLowerCase())) return NextResponse.json({ error: { message: '현재 계정의 지식 연결을 다시 불러와 주세요.' } }, { status: 403, headers });
+  if (agent && (typeof body.agentContext?.accountEmail !== 'string' || body.agentContext.accountEmail.toLowerCase() !== session.user?.email?.toLowerCase())) return NextResponse.json({ error: { message: '현재 계정의 자료를 다시 불러와 주세요.' } }, { status: 403, headers });
   const agentKnown = new Set<string>(agent ? body.agentTrace.flatMap((step: { output?: { nodes?: { id: string }[] } }) => (Array.isArray(step.output?.nodes) ? step.output.nodes : []).map(n => n.id).filter(id => typeof id === 'string' && id.length <= 500)) : []);
   const exactQuery = agent && body.agentTrace.some((step: { name?: string; output?: { kind?: string; total?: number } }) => step.name === 'query_ontology' && ['count', 'aggregate'].includes(step.output?.kind || '') && typeof step.output?.total === 'number');
   if (exactQuery) agentKnown.add('ontology:query');
@@ -56,7 +56,7 @@ export async function POST(req: Request) {
   if (typeof body.ontologyContext === 'string' && body.ontologyContext.length <= 100000) {
     try {
       const parsed = JSON.parse(body.ontologyContext);
-      if (parsed.accountEmail && String(parsed.accountEmail).toLowerCase() !== session.user?.email?.toLowerCase()) return NextResponse.json({ error: { message: '현재 계정의 지식 연결을 다시 불러와 주세요.' } }, { status: 403, headers });
+      if (parsed.accountEmail && String(parsed.accountEmail).toLowerCase() !== session.user?.email?.toLowerCase()) return NextResponse.json({ error: { message: '현재 계정의 자료를 다시 불러와 주세요.' } }, { status: 403, headers });
       if (Array.isArray(parsed.nodes) && parsed.coverage && parsed.counts) ontology = JSON.stringify(parsed);
     } catch { /* Invalid context is unavailable, never promoted into system instructions. */ }
   }
@@ -104,7 +104,7 @@ export async function POST(req: Request) {
       const daily = status === 429 && /free-models-per-day|daily|per.day/i.test(detail);
       const retryAfter = daily ? Math.ceil((Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate() + 1) - Date.now()) / 1000) : 60;
       const message = status === 429
-        ? daily ? '무료 AI의 오늘 사용 한도에 도달했습니다. 한도 초기화 후 다시 이용해 주세요. 메일 개수 질문은 지식 연결에서 계속 확인할 수 있습니다.' : '무료 AI가 일시적으로 혼잡합니다. 1분 후 다시 시도해 주세요. 메일 개수 질문은 계속 사용할 수 있습니다.'
+        ? daily ? '무료 AI의 오늘 사용 한도에 도달했습니다. 한도 초기화 후 다시 이용해 주세요.' : '무료 AI가 일시적으로 혼잡합니다. 1분 후 다시 시도해 주세요. 메일 개수 질문은 계속 사용할 수 있습니다.'
         : status === 402 ? 'AI 계정의 사용 가능 잔액 또는 한도가 부족합니다. 관리자에게 AI 연결 설정 확인을 요청해 주세요.'
         : 'AI 응답을 가져오지 못했습니다. 잠시 후 다시 시도해 주세요.';
       // Never log provider text: it can contain request data or credentials.
@@ -165,7 +165,7 @@ export async function POST(req: Request) {
         for (const id of node.provenance?.sourceIds || []) if (known.has(id)) allowed.add(id);
       }
       const cited = [...text.matchAll(/\[((?:mail|event):[^\]\n]+)\]/g)].map(m => m[1]);
-      if (cited.some(id => !known.has(id) || !allowed.has(id))) return NextResponse.json({ error: { message: 'AI 답변의 원본 근거를 확인하지 못했습니다. 지식 연결에서 실제 자료를 확인해 주세요.' } }, { status: 502, headers });
+      if (cited.some(id => !known.has(id) || !allowed.has(id))) return NextResponse.json({ error: { message: 'AI 답변의 원본 근거를 확인하지 못했습니다. 자료를 다시 조회해 주세요.' } }, { status: 502, headers });
     }
     return NextResponse.json({ content: [{ text }], knowledgeSource: ontology ? 'ontology' : 'unavailable' }, { headers });
   } catch { return NextResponse.json({ error: { message: 'AI 서비스 응답 시간이 초과되었거나 연결에 실패했습니다.' } }, { status: 502, headers }); }
