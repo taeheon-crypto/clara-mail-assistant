@@ -1,8 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assistantPlan, evidenceBatches, runAssistant } from '../public/ontology-assistant.mjs';
+import { assistantPlan, evidenceBatches, runAssistant, redactSourceText } from '../public/ontology-assistant.mjs';
 
 const now = new Date('2026-10-05T04:00:00Z');
+test('authentication values are hidden before body analysis without discarding ordinary mail facts', () => {
+  assert.equal(redactSourceText('Code:\n654321\nLogin requested from Windows.', 'Vercel verification code'), 'Code:\n[인증값 숨김]\nLogin requested from Windows.');
+  assert.equal(redactSourceText('로그인 코드 (654321)\n총 56건, 마감 2026-10-09'), '로그인 코드 ([인증값 숨김])\n총 56건, 마감 2026-10-09');
+  assert.ok(!redactSourceText('API key: sk-or-v1-' + 'a'.repeat(64)).includes('a'.repeat(64)));
+  assert.equal(redactSourceText('Invoice 123456 amount 500000'), 'Invoice 123456 amount 500000');
+});
 test('simple mail tools resolve yesterday and exact rankings without model-authored plans', () => {
   const plan = assistantPlan('get_mail', { period: 'yesterday' }, { now, timeZone: 'Asia/Seoul' });
   assert.equal(plan.start, '2026-10-04'); assert.equal(plan.endExclusive, '2026-10-05'); assert.equal(plan.scope, 'received');

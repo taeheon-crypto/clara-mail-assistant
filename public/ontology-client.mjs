@@ -1,7 +1,7 @@
 import { buildOntology, searchOntology, ontologyContext, exportOntology, TYPES } from './ontology-core.mjs';
 import { queryOntology, planQuery, rangeKey, resolvePlan, queryRange } from './ontology-query.mjs';
 import { validatePlan } from './ontology-plan.mjs';
-import { runAssistant, assistantPlan, evidenceBatches } from './ontology-assistant.mjs';
+import { runAssistant, assistantPlan, evidenceBatches, redactSourceText } from './ontology-assistant.mjs';
 import { retrieveEvidence } from './ontology-retrieval.mjs';
 
 const emptyState = () => ({ version: 1, emails: {}, events: {}, calendars: [], manual: { nodes: [], edges: [] }, sync: { mail: { status: 'idle', cursor: null }, calendar: { status: 'idle', index: 0, cursor: null, listCursor: null, listed: false } } });
@@ -266,14 +266,14 @@ window.ClaraOntology = {
     const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Seoul';
     const current = () => { if (account !== agentAccount || state !== agentState) throw new Error('계정이나 자료가 변경되었습니다. 같은 질문을 다시 보내 주세요.'); };
     const context = { accountEmail: account, timeZone, focusId, coverage: { mail: { status: state.sync.mail.status, indexed: Object.keys(state.emails).length }, calendar: { status: state.sync.calendar.status, indexed: Object.keys(state.events).length } } };
-    const history = messages.slice(-10).filter(m => ['user', 'assistant'].includes(m?.role) && typeof m.content === 'string').map(m => ({ role: m.role, content: m.content.slice(0, 12000) }));
-    if (history.at(-1)?.role !== 'user' || history.at(-1)?.content !== question) history.push({ role: 'user', content: question });
+    const history = messages.slice(-10).filter(m => ['user', 'assistant'].includes(m?.role) && typeof m.content === 'string').map(m => ({ role: m.role, content: redactSourceText(m.content.slice(0, 12000)) }));
+    if (history.at(-1)?.role !== 'user' || history.at(-1)?.content !== question) history.push({ role: 'user', content: redactSourceText(question) });
     const allowed = new Set();
     if (focusId && graph.byId.has(focusId)) allowed.add(focusId);
     for (const message of history) for (const match of message.content.matchAll(/\[((?:mail|event):[^\]\n]+)\]/g)) if (graph.byId.has(match[1])) allowed.add(match[1]);
     const source = n => {
       allowed.add(n.id);
-      return { id: n.id, type: n.type, label: n.label, properties: { ...n.properties, text: String(n.properties.text || ''), textIsExcerpt: Boolean(n.properties.textTruncated || String(n.properties.text || '').length >= 24000) }, provenance: n.provenance };
+      return { id: n.id, type: n.type, label: redactSourceText(n.label, n.label), properties: { ...n.properties, text: redactSourceText(n.properties.text, n.label), textIsExcerpt: Boolean(n.properties.textTruncated || String(n.properties.text || '').length >= 24000) }, provenance: n.provenance };
     };
     const request = async (mode, evidence, transcript = [], remainingTools = 10) => {
       current();
@@ -305,7 +305,7 @@ window.ClaraOntology = {
             const res = await fetch('/api/ontology/sync?' + new URLSearchParams({ source: 'mail_body', id: n.id.slice(5), offset: String(offset) }), { credentials: 'same-origin', signal: AbortSignal.timeout(30000) });
             const body = await res.json(); current();
             if (!res.ok || body.id !== n.id || typeof body.text !== 'string') throw new Error('긴 메일의 원문 읽기를 완료하지 못했습니다.');
-            expanded.push({ ...n, properties: { ...n.properties, text: body.text, textIsExcerpt: false, originalBodyPartOffset: offset, originalTotalChars: body.totalChars } });
+            expanded.push({ ...n, properties: { ...n.properties, text: redactSourceText(body.text, n.label), textIsExcerpt: false, originalBodyPartOffset: offset, originalTotalChars: body.totalChars } });
             if (body.nextOffset !== null && (!Number.isSafeInteger(body.nextOffset) || body.nextOffset <= offset)) throw new Error('원문 읽기 위치를 확인하지 못했습니다.');
             offset = body.nextOffset;
           } while (offset !== null);
@@ -335,7 +335,7 @@ window.ClaraOntology = {
         const selected = queryOntology(graph, '', { now, timeZone, accountEmail: account, plan, allowReason: true });
         if (selected?.kind === 'clarify') return { error: selected.text, nodes: [] };
         lastQuery = selected; lastPlan = plan;
-        const meta = { kind: selected.kind, total: selected.total, matchedTotal: selected.matchedTotal, complete: selected.complete, scope: plan.scope, period: args.period || 'all', summary: selected.text?.slice(0, 8000) };
+        const meta = { kind: selected.kind, total: selected.total, matchedTotal: selected.matchedTotal, complete: selected.complete, scope: plan.scope, period: args.period || 'all', summary: redactSourceText(selected.text?.slice(0, 8000)) };
         if (name === 'rank_correspondents') return { ...meta, groups: selected.groups?.map(g => ({ ...g, sourceIds: g.sourceIds.slice(0, 3) })), nodes: [] };
         return pack(selected.records || [], meta);
       }
@@ -345,7 +345,7 @@ window.ClaraOntology = {
       }
       if (typeof args.query !== 'string' || !args.query.trim() || args.query.length > 2000) throw new Error('Search query must be a nonempty short string.');
       const found = retrieveEvidence(graph, args.query, { focusId, limit: 24 });
-      return pack(found.nodes, { exhaustive: false, method: found.method, passages: found.passages });
+      return pack(found.nodes, { exhaustive: false, method: found.method, passages: found.passages.map(p => ({ ...p, text: redactSourceText(p.text, graph.byId.get(p.sourceId)?.label || '') })) });
     };
     // Evidence enters the very first model call. This is a context preparation
     // step, not an intent whitelist or a requirement to match query grammar.
