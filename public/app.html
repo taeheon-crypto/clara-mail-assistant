@@ -332,15 +332,17 @@ body{display:flex;flex-direction:row;align-items:center;justify-content:center;
 .gmail-sender-info{flex:1;min-width:0}
 .gmail-sender-name{font-size:14px;font-weight:600;color:var(--fg)}
 .gmail-sender-to{font-size:12px;color:var(--fg-s);margin-top:1px}
-.gmail-to-me-btn{font-size:12px;color:var(--fg-s);background:none;border:none;cursor:pointer;padding:0;margin-top:2px;transition:color .1s;text-align:left}
+.gmail-to-me-btn{font-size:12px;color:var(--fg-s);background:none;border:none;cursor:pointer;padding:0;margin-top:2px;transition:color .1s;text-align:left;max-width:100%;overflow-wrap:anywhere}
 .gmail-to-me-btn:hover{color:var(--primary)}
 
 /* 메타 팝오버 */
 .meta-popup{display:none;position:absolute;left:0;top:calc(100% + 4px);background:#fff;border:1px solid var(--border);border-radius:10px;padding:14px 16px;box-shadow:0 4px 20px rgba(0,0,0,.14);z-index:1000;min-width:340px;white-space:nowrap}
 .meta-popup.show{display:block}
+.meta-popup{max-width:min(520px,calc(100vw - 24px));min-width:min(340px,calc(100vw - 24px));box-sizing:border-box;max-height:70vh;overflow:auto}
+.meta-popup-row[hidden]{display:none}
 .meta-popup-row{display:grid;grid-template-columns:80px 1fr;gap:6px;padding:3px 0;font-size:13px;line-height:1.5}
 .meta-popup-label{color:var(--fg-s);text-align:right;font-weight:500}
-.meta-popup-val{color:var(--fg);font-weight:500}
+.meta-popup-val{color:var(--fg);font-weight:500;white-space:normal;overflow-wrap:anywhere}
 .meta-popup-val b{font-weight:700}
 .gmail-meta-right{display:flex;align-items:center;gap:2px;flex-shrink:0}
 .gmail-date{font-size:12px;color:var(--fg-s);margin-right:4px;white-space:nowrap}
@@ -1347,7 +1349,7 @@ function _mapGmailEmail(e) {
     sender: e.sender, icon: _gmailIcon(e.sender),
     unread: e.unread, starred: e.starred,
     subject: e.subject, preview: e.preview,
-    date: _gmailShortDate(e.date), body: e.body,
+    date: _gmailShortDate(e.date), dateHeader: e.date || '', body: e.body,
     bodyHtml: e.bodyHtml || null,
     original: e.sender + '\n\n' + e.body,
     label: 'inbox', project: '받은편지함', pDesc: e.subject.slice(0, 50),
@@ -3283,6 +3285,24 @@ function renderEmailBody(e) {
   }
 }
 
+function renderMailMetadata(e) {
+  const from = e.senderEmail
+    ? (e.sender && e.sender !== e.senderEmail ? e.sender + ' <' + e.senderEmail + '>' : e.senderEmail)
+    : (e.sender || '정보 없음');
+  const to = e.toHeader || '수신자 헤더 없음';
+  const date = e.dateHeader || '날짜 헤더 없음';
+  document.getElementById('mp-from').textContent = from;
+  document.getElementById('mp-to').textContent = to;
+  document.getElementById('mp-cc').textContent = e.ccHeader || '';
+  document.getElementById('mp-cc-row').hidden = !e.ccHeader;
+  document.getElementById('mp-date').textContent = date;
+  document.getElementById('mp-subj').textContent = e.subject;
+  document.getElementById('mp-domain').textContent = (e.senderEmail || '').includes('@') ? e.senderEmail.split('@').pop() : '정보 없음';
+  document.getElementById('to-me-btn').textContent = '받는 사람: ' + to + ' ▾';
+  document.getElementById('g-date').textContent = e.date || '';
+  document.getElementById('g-date').title = date;
+}
+
 function openEmail(id) {
   selId = id;
   // ed-wrapper 표시
@@ -3302,19 +3322,15 @@ function openEmail(id) {
   const taskChips = document.getElementById('g-task-chips');
   if (taskChips) taskChips.innerHTML = '';
   document.getElementById('g-sender').textContent = e.sender;
-  document.getElementById('g-date').textContent = e.date + '/2026';
+  document.getElementById('g-date').textContent = e.date;
   document.getElementById('g-from-val') && (document.getElementById('g-from-val').textContent = e.sender);
-  document.getElementById('g-date-val') && (document.getElementById('g-date-val').textContent = e.date + '/2026');
+  document.getElementById('g-date-val') && (document.getElementById('g-date-val').textContent = e.dateHeader || '날짜 헤더 없음');
   document.getElementById('g-sub-val') && (document.getElementById('g-sub-val').textContent = e.subject);
   // 메타 팝오버 데이터 채우기
-  const domain = e.sender.includes('@') ? e.sender.split('@')[1] : 'gmail.com';
-  document.getElementById('mp-from').innerHTML = `<b>${e.sender}</b> &lt;heon1018@gmail.com&gt;`;
-  document.getElementById('mp-to').textContent = 'ceo@bigbangangels.com';
-  document.getElementById('mp-date').textContent = `2026. ${e.date.replace('/','. ')}. 오후 10:33`;
-  document.getElementById('mp-subj').textContent = e.subject;
-  document.getElementById('mp-domain').textContent = 'gmail.com';
+  renderMailMetadata(e);
   // 팝업 닫기
   document.getElementById('meta-popup').classList.remove('show');
+  document.getElementById('meta-popup').style.display = 'none';
   // 발신자 아바타 (이니셜 + 색상) — 목록과 동일하게 발신자 기준으로 일관된 색상
   const av = document.getElementById('g-av');
   av.textContent = _avatarInitial(e.sender);
@@ -3554,6 +3570,7 @@ function toggleMetaPopup(e) {
     p.style.left = r.left + 'px';
     p.style.display = 'block';
     p.classList.add('show');
+    p.style.left = Math.max(12, Math.min(r.left, window.innerWidth - p.getBoundingClientRect().width - 12)) + 'px';
     bringToFront(p);
     registerOutsideClick('meta-popup', ['#to-me-btn']);
   }
@@ -7256,9 +7273,10 @@ async function toggleCpMicInt() {
 <div class="meta-popup" id="meta-popup" style="position:fixed;display:none" onmousedown="event.stopPropagation()">
   <div class="meta-popup-row"><span class="meta-popup-label">보낸사람:</span><span class="meta-popup-val" id="mp-from"></span></div>
   <div class="meta-popup-row"><span class="meta-popup-label">받는 사람:</span><span class="meta-popup-val" id="mp-to"></span></div>
+  <div class="meta-popup-row" id="mp-cc-row" hidden><span class="meta-popup-label">참조:</span><span class="meta-popup-val" id="mp-cc"></span></div>
   <div class="meta-popup-row"><span class="meta-popup-label">날짜:</span><span class="meta-popup-val" id="mp-date"></span></div>
   <div class="meta-popup-row"><span class="meta-popup-label">제목:</span><span class="meta-popup-val" id="mp-subj"></span></div>
-  <div class="meta-popup-row"><span class="meta-popup-label">발송 도메인:</span><span class="meta-popup-val" id="mp-domain"></span></div>
+  <div class="meta-popup-row"><span class="meta-popup-label">보낸 주소 도메인:</span><span class="meta-popup-val" id="mp-domain"></span></div>
 </div>
 
 
