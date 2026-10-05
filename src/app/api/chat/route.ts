@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@/auth';
 import { PLANNER_SYSTEM, validatePlan } from '../../../../public/ontology-plan.mjs';
-import { AGENT_SYSTEM, AGENT_REPAIR_SYSTEM, AGENT_RESPONSE_FORMAT, validateDecision } from '../../../../public/ontology-agent.mjs';
+import { AGENT_SYSTEM, AGENT_REPAIR_SYSTEM, agentResponseFormat, validateDecision } from '../../../../public/ontology-agent.mjs';
 
 const MODEL = 'google/gemma-4-26b-a4b-it:free';
 const MODELS = [MODEL, 'openrouter/free'];
@@ -35,6 +35,11 @@ export async function POST(req: Request) {
   const agent = body.mode === 'ontology_agent';
   if (agent && (!Array.isArray(body.agentTrace) || body.agentTrace.length > 6 || JSON.stringify(body.agentTrace).length > 100000 || !Number.isInteger(body.remainingTools) || body.remainingTools < 0 || body.remainingTools > 6)) return NextResponse.json({ error: { message: '에이전트 도구 기록 형식이 잘못되었습니다.' } }, { status: 400, headers });
   if (agent && (typeof body.agentContext?.accountEmail !== 'string' || body.agentContext.accountEmail.toLowerCase() !== session.user?.email?.toLowerCase())) return NextResponse.json({ error: { message: '현재 계정의 지식 연결을 다시 불러와 주세요.' } }, { status: 403, headers });
+  const agentKnown = new Set<string>(agent ? body.agentTrace.flatMap((step: { output?: { nodes?: { id: string }[] } }) => (Array.isArray(step.output?.nodes) ? step.output.nodes : []).map(n => n.id).filter(id => typeof id === 'string' && id.length <= 500)) : []);
+  const exactQuery = agent && body.agentTrace.some((step: { name?: string; output?: { kind?: string; total?: number } }) => step.name === 'query_ontology' && ['count', 'aggregate'].includes(step.output?.kind || '') && typeof step.output?.total === 'number');
+  if (exactQuery) agentKnown.add('ontology:query');
+  const agentSources = [...agentKnown].filter(id => /^(mail|event):/.test(id) || id === 'ontology:query');
+  const responseFormat = agentResponseFormat(agentSources);
   let plannerClock = '';
   if (planning || agent) {
     const timeZone = agent ? body.agentContext?.timeZone : body.plannerContext?.timeZone;
@@ -64,7 +69,7 @@ export async function POST(req: Request) {
     const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST', signal: AbortSignal.timeout(25000),
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`, 'HTTP-Referer': process.env.APP_URL || 'http://localhost:3000', 'X-Title': 'Clara Mail Assistant' },
-      body: JSON.stringify({ models: agent ? ['openrouter/free', MODEL] : MODELS, max_tokens: Math.min(4096, Math.max(128, Number(body.max_tokens) || 1024)), ...(agent ? { response_format: AGENT_RESPONSE_FORMAT, provider: { require_parameters: true } } : {}), messages }),
+      body: JSON.stringify({ models: agent ? ['openrouter/free', MODEL] : MODELS, max_tokens: Math.min(4096, Math.max(128, Number(body.max_tokens) || 1024)), ...(agent ? { response_format: responseFormat, provider: { require_parameters: true } } : {}), messages }),
     });
     let data = await res.json().catch(() => null);
     // A free reasoning model may exhaust its output budget before a final answer.
@@ -72,7 +77,7 @@ export async function POST(req: Request) {
     if (res.ok && !data?.error && !data?.choices?.[0]?.message?.content?.trim() && deadline - Date.now() > 1500) {
       const retry = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST', signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())), headers: requestHeaders,
-        body: JSON.stringify({ model: 'openrouter/free', max_tokens: Math.max(2048, Math.min(4096, Number(body.max_tokens) || 2048)), ...(agent ? { response_format: AGENT_RESPONSE_FORMAT, provider: { require_parameters: true } } : {}), messages }),
+        body: JSON.stringify({ model: 'openrouter/free', max_tokens: Math.max(2048, Math.min(4096, Number(body.max_tokens) || 2048)), ...(agent ? { response_format: responseFormat, provider: { require_parameters: true } } : {}), messages }),
       });
       const retried = await retry.json().catch(() => null);
       if (retry.ok && typeof retried?.choices?.[0]?.message?.content === 'string' && retried.choices[0].message.content.trim()) data = retried;
@@ -95,16 +100,14 @@ export async function POST(req: Request) {
     if (typeof text !== 'string' || !text.trim()) return NextResponse.json({ error: { message: 'AI가 빈 응답을 반환했습니다. 다시 시도해 주세요.' } }, { status: 502, headers });
     if (agent) {
       try {
-        const known = new Set<string>(body.agentTrace.flatMap((step: { output?: { nodes?: { id: string }[] } }) => (step.output?.nodes || []).map(n => n.id)));
-        const exactQuery = body.agentTrace.some((step: { name?: string; output?: { kind?: string; total?: number } }) => step.name === 'query_ontology' && ['count', 'aggregate'].includes(step.output?.kind || '') && typeof step.output?.total === 'number');
-        if (exactQuery) known.add('ontology:query');
-        const allowedSources = [...known].filter(id => /^(mail|event):/.test(id) || id === 'ontology:query');
+        const known = agentKnown;
+        const allowedSources = agentSources;
         const parse = (candidate: string) => {
           try {
             const parsed = JSON.parse(candidate.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, ''));
             const result = validateDecision(parsed && Object.keys(parsed).length === 1 && parsed.decision ? parsed.decision : parsed);
             if ('error' in result || result.decision.action !== 'answer') return result;
-            const cited = [...result.decision.text.matchAll(/\[((?:mail|event):[^\]\n]+|ontology:query)\]/g)].map(m => m[1]);
+            const cited = [...(result.decision.citations || []), ...[...result.decision.text.matchAll(/\[((?:mail|event):[^\]\n]+|ontology:query)\]/g)].map(m => m[1])];
             if (cited.some(id => !known.has(id))) return { error: '답변의 인용이 조회 근거와 일치하지 않습니다.', code: 'unknown_citation' };
             if (allowedSources.length && !cited.length) return { error: '답변에 원본 근거 인용이 없습니다.', code: 'missing_citation' };
             return result;
@@ -118,7 +121,7 @@ export async function POST(req: Request) {
           if (deadline - Date.now() > 1500) {
             const repaired = await fetch('https://openrouter.ai/api/v1/chat/completions', {
               method: 'POST', signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())), headers: requestHeaders,
-              body: JSON.stringify({ models: ['openrouter/free', MODEL], max_tokens: 4096, response_format: AGENT_RESPONSE_FORMAT, provider: { require_parameters: true }, messages: [...messages, { role: 'assistant', content: text.slice(0, 20000) }, { role: 'system', content: AGENT_REPAIR_SYSTEM + '\nReturn {decision: ...} matching the supplied schema. Validation code: ' + checked.code + '\nIf fixing a citation error, revise the FINAL ANSWER rather than repeating a query merely to change format. Cite only these EXACT supported IDs in brackets: ' + JSON.stringify(allowedSources.slice(0, 180)) }] }),
+              body: JSON.stringify({ models: ['openrouter/free', MODEL], max_tokens: 4096, response_format: responseFormat, provider: { require_parameters: true }, messages: [...messages, { role: 'assistant', content: text.slice(0, 20000) }, { role: 'system', content: AGENT_REPAIR_SYSTEM + '\nReturn {decision: ...} matching the supplied schema. Validation code: ' + checked.code + '\nIf fixing a citation error, revise the FINAL ANSWER rather than repeating a query merely to change format. Select exact supported IDs in the citations field: ' + JSON.stringify(allowedSources.slice(0, 180)) }] }),
             });
             const repairedData = await repaired.json().catch(() => null);
             const candidate = repairedData?.choices?.[0]?.message?.content;
@@ -127,6 +130,7 @@ export async function POST(req: Request) {
         }
         if ('error' in checked) return NextResponse.json({ error: { message: 'AI가 도구 요청 형식을 맞추지 못했고 자동 복구도 완료하지 못했습니다. 조건을 바꾸지 말고 잠시 후 다시 시도해 주세요.', code: 'agent_invalid_decision', validationCode: checked.code } }, { status: 502, headers });
         const decision = checked.decision;
+        if (decision.action === 'answer' && decision.citations?.length) decision.text += '\n\n근거: ' + [...new Set(decision.citations)].map(id => '[' + id + ']').join(' ');
         if (decision.action === 'tool' && body.remainingTools === 0) return NextResponse.json({ error: { message: 'AI가 도구 조회 한도 안에 답변을 마무리하지 못했습니다.' } }, { status: 502, headers });
         return NextResponse.json({ decision, knowledgeSource: 'ontology-agent' }, { headers });
       } catch { return NextResponse.json({ error: { message: 'AI가 올바른 에이전트 응답을 반환하지 못했습니다.' } }, { status: 502, headers }); }
