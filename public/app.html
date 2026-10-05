@@ -308,6 +308,16 @@ body{display:flex;flex-direction:row;align-items:center;justify-content:center;
 .ed-blank p{font-size:13px}
 .ed-view{display:none;flex-direction:column;flex:1;overflow:hidden}
 .ed-view.show{display:flex}
+.ed.ai-workspace{flex-direction:row;overflow-x:auto;gap:6px}
+.ed.ai-workspace #ed-blank{flex:0 0 56%;min-width:460px;width:auto!important;height:100%;overflow:hidden}
+.ed.ai-workspace #ed-view{display:flex!important;flex:1 0 320px!important;min-width:320px;border-left:1px solid var(--border-s);background:#fff}
+.ed.ai-workspace:not(.ai-mail-open) #ed-view>*{display:none!important}
+.ed.ai-workspace:not(.ai-mail-open) #ed-view::after{content:'관련 메일을 선택하면 원문이 여기에 표시됩니다';margin:auto;padding:24px;color:var(--fg-s);font-size:13px;text-align:center}
+.ai-workspace #ba-source-panel{width:280px!important;min-width:200px!important;flex:0 0 44%}
+.ai-workspace #ba-source-list table{min-width:0!important;table-layout:auto!important}
+.ai-workspace #ba-source-list th:nth-child(n+4),.ai-workspace #ba-source-list td:nth-child(n+4),.ai-workspace #ba-source-list col:nth-child(n+4){display:none}
+.ai-workspace #ba-source-list col:nth-child(2){width:auto!important}
+.ai-workspace #ba-source-list tr[data-mail-id].selected{background:#f1ebff;box-shadow:inset 3px 0 var(--primary)}
 
 /* email detail header */
 .edh{padding:16px 20px 10px;border-bottom:1px solid var(--border);flex-shrink:0}
@@ -1966,6 +1976,7 @@ function elTabSel(el, label) {
 
 // ─── AI 새 채팅: 어떤 상태에서도 AI 홈으로 ───
 function refreshAiMode() {
+  document.querySelector('.ed')?.classList.remove('ai-workspace','ai-mail-open');
   _resetPanelTransitionArtifacts(); _scheduleSidebarSync();
   // 1. inbox 페이지 강제 활성화 (ed-wrapper는 inbox 안에 있음)
   document.querySelectorAll('.page').forEach(function(p){ p.classList.remove('active','fade-in'); });
@@ -2171,6 +2182,7 @@ function _enterAiMode(fromCalendar) {
 
   var blankAiBar = document.getElementById('blank-ai-bar');
   var hasPrevSearch = !!document.getElementById('ba-msgs');
+  if (hasPrevSearch) document.querySelector('.ed')?.classList.add('ai-workspace');
   if (blankAiBar) {
     if (hasPrevSearch) {
       // 이전 검색 결과가 있으면 blank-ai-bar 숨기고 검색 화면 유지
@@ -2270,6 +2282,7 @@ function _enterAiMode(fromCalendar) {
 function _exitAiMode() {
   if (!_aiMode) return;
   _aiMode = false;
+  document.querySelector('.ed')?.classList.remove('ai-workspace');
   var myGen = ++_aiTransGen;
   _resetPanelTransitionArtifacts(); _scheduleSidebarSync();
   var mailView = document.getElementById('fp-mail-view');
@@ -2397,9 +2410,12 @@ function blankAiSearch(query) {
   edBlank.style.height = '100%';
   edBlank.style.width = '100%';
   edBlank.style.gap = '0';
+  document.querySelector('.ed').classList.add('ai-workspace');
+  document.querySelector('.ed').classList.remove('ai-mail-open');
 
   // ── 왼쪽: 대화 영역 ──
   var left = document.createElement('div');
+  left.id = 'ba-chat-panel';
   left.style.cssText = 'flex:1;display:flex;flex-direction:column;overflow:hidden;border-right:1px solid #f0f0f0;min-width:0';
   left.innerHTML = `
     <div id="ba-msgs" style="flex:1;overflow-y:auto;padding:24px 28px;display:flex;flex-direction:column;gap:16px"></div>
@@ -2426,6 +2442,7 @@ function blankAiSearch(query) {
 
   // ── 오른쪽: 소스 테이블 ──
   var right = document.createElement('div');
+  right.id = 'ba-source-panel';
   right.style.cssText = 'width:480px;min-width:480px;display:flex;flex-direction:column;overflow:hidden;background:#fafafa;border-left:1px solid #f0f0f0';
   right.innerHTML = `
     <div style="padding:8px 14px 6px;border-bottom:1px solid #e5e7eb;flex-shrink:0">
@@ -2477,9 +2494,10 @@ function blankAiSearch(query) {
 
     function onMove(ev) {
       var dx = startX - ev.clientX; // 왼쪽으로 드래그 → 우측 패널 넓어짐
-      var newW = Math.min(Math.max(startW + dx, 280), containerW - 300);
+      var newW = Math.min(Math.max(startW + dx, 200), containerW - 200);
       right.style.width = newW + 'px';
       right.style.minWidth = newW + 'px';
+      right.style.flexBasis = newW + 'px';
     }
     function onUp() {
       resizer._dragging = false;
@@ -2828,13 +2846,11 @@ function _renderSourceList(sources) {
   // sources = 이메일 배열 → 첨부파일 단위로 flatten
   var rows = [];
   sources.forEach(function(email) {
+    rows.push({ att: null, email: email });
     if (email.attachments && email.attachments.length) {
       email.attachments.forEach(function(att) {
         rows.push({ att: att, email: email });
       });
-    } else {
-      // 첨부 없는 이메일도 이메일 자체를 한 행으로
-      rows.push({ att: null, email: email });
     }
   });
 
@@ -2883,10 +2899,12 @@ function _renderSourceList(sources) {
       tr.style.cssText = 'border-bottom:1px solid #f0f0f0;transition:background .1s;cursor:pointer;vertical-align:top';
       tr.onmouseenter = function(){ this.style.background = '#f8f6ff'; };
       tr.onmouseleave = function(){ this.style.background = ''; };
-      // 행 클릭 → 항상 첨부파일 팝업
+      tr.dataset.mailId = email.id;
+      tr.classList.toggle('selected', email.id === selId && document.querySelector('.ed').classList.contains('ai-mail-open'));
+      // 메일은 기존 원문 상세 패널, 실제 첨부파일은 첨부 뷰어
       tr.onclick = (function(attObj, emailObj, dName, dType){
         return function(){
-          openAttachmentPopup(attObj, emailObj, dName, dType);
+          openAiSource(attObj, emailObj, dName, dType);
         };
       })(att, email, docName, docType);
 
@@ -2922,7 +2940,7 @@ function _renderSourceList(sources) {
         if (link) {
           link.onclick = function(e) {
             e.stopPropagation();
-            openAttachmentPopup(attObj, emailObj, dName, dType);
+            openAiSource(attObj, emailObj, dName, dType);
           };
         }
       })(att, email, docName, docType);
@@ -2934,6 +2952,14 @@ function _renderSourceList(sources) {
   });
 }
 
+
+function openAiSource(att, email, docName, docType) {
+  if (att) { openAttachmentPopup(att, email, docName, docType); return; }
+  openEmail(email.id);
+  document.querySelectorAll('#ba-source-list tr[data-mail-id]').forEach(function(row) {
+    row.classList.toggle('selected', row.dataset.mailId === String(email.id));
+  });
+}
 
 function openAttachmentPopup(att, email, docName, docType) {
   var existing = document.getElementById('att-viewer-modal');
@@ -3361,7 +3387,10 @@ function openEmail(id) {
       </div>
     </div>
     <div class="sg-hint"><svg viewBox="0 0 24 24" stroke="currentColor"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>프로젝트 연결 후 Tasks가 제안됩니다</div>`;
-  document.getElementById('ed-blank').style.display = 'none';
+  const aiReading = _aiMode && !!document.getElementById('ba-msgs');
+  document.querySelector('.ed').classList.toggle('ai-workspace', aiReading);
+  document.querySelector('.ed').classList.toggle('ai-mail-open', aiReading);
+  document.getElementById('ed-blank').style.display = aiReading ? 'flex' : 'none';
   const edView = document.getElementById('ed-view');
   edView.style.display = 'flex'; // 인라인 display:none 덮어쓰기
   edView.classList.add('show');
