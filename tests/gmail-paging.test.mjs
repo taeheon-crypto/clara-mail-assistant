@@ -11,7 +11,7 @@ const message = id => ({id,threadId:id,labelIds:['INBOX'],payload:{headers:[{nam
 async function api(fetchStub) {
   const source=await readFile(new URL('../src/app/api/gmail/messages/route.ts',import.meta.url),'utf8');
   const exports={};
-  vm.runInNewContext(ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,fetch:fetchStub,URL,Buffer,setTimeout:fn=>fn(),console:{error(){}},require(name){if(name==='@/lib/gmail-transport')return {gmailFetch:(url)=>fetchStub(url),invalidateGmail(){}};if(name==='@/auth')return {auth:async()=>({accessToken:'test'})};if(name==='next/server')return {NextResponse:{json:Response.json}};throw Error(name);}});
+  vm.runInNewContext(ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,fetch:fetchStub,URL,Buffer,Response,setTimeout:fn=>fn(),console:{error(){}},require(name){if(name==='@/lib/gmail-transport')return {gmailFetch:(url)=>fetchStub(url),gmailMetadataBatch:ids=>Promise.all(ids.map(id=>fetchStub(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=metadata`))),invalidateGmail(){}};if(name==='@/auth')return {auth:async()=>({accessToken:'test'})};if(name==='next/server')return {NextResponse:{json:Response.json}};throw Error(name);}});
   return exports.GET;
 }
 
@@ -162,4 +162,20 @@ test('returning to a recently loaded folder reuses mails and its cursor without 
   const c=await client([{emails:ids.map(pageEmail),nextPageToken:'older'},{emails:[pageEmail('sent')],nextPageToken:null}]);
   await c.run("_gmailFetchMessages('inbox')");await c.run("_gmailFetchMessages('sent')");await c.run("_gmailFetchMessages('inbox')");
   assert.equal(c.requests.length,2);assert.equal(c.emails.length,30);assert.equal(c.run('_gmailNextPageToken'),'older');
+});
+
+
+test('mail detail loads one full body without listing or downloading other messages',async()=>{
+  const urls=[];const get=await api(async url=>{urls.push(String(url));return Response.json(message('abc'));});
+  const data=await(await get(new Request('https://clara.test/api/gmail/messages?id=abc'))).json();
+  assert.equal(urls.length,1);assert.match(urls[0],/messages\/abc\?format=full/);assert.equal(data.emails[0].bodyLoaded,true);assert.equal(data.emails[0].body,'Original message');
+});
+test('persisted folder rows remain visible while a refresh is waiting',async()=>{
+  const c=await client([]);let release;
+  c.w.ClaraMailboxStore={load:async()=>({emails:ids.map(id=>({id:'g_'+id,gmailId:id,subject:'Saved '+id,label:'sent'})),time:0,cursor:'older',hasMore:true,retry:false}),save:async()=>{}};
+  c.ctx.fetch=()=>new Promise(resolve=>{release=resolve;});
+  const pending=c.run("_gmailFetchMessages('sent')");
+  for(let i=0;i<10&&!release;i++)await Promise.resolve();
+  assert.equal(c.emails.length,30);assert.match(c.w.document.getElementById('el-load-more-row').textContent,/최신 메일 확인/);
+  release(Response.json({error:'quota_exceeded',retryAfterMs:60000},{status:429}));await pending;assert.equal(c.emails.length,30);
 });

@@ -40,3 +40,15 @@ test('AI source clicks preserve conversation and list while opening the original
   assert.equal(w.document.getElementById('ed-blank').style.display,'none');
   w.happyDOM.abort();
 });
+
+
+test('lazy original-body completion cannot overwrite a different selected mail',async()=>{
+  const html=await readFile(new URL('../public/app.html',import.meta.url),'utf8');const w=new Window();w.document.body.innerHTML='<div id="ed-original-content"></div><div id="ed-body-text"></div>';
+  let release,renders=0;
+  const ctx=vm.createContext({window:{ClaraGmailRead:()=>new Promise(resolve=>{release=resolve;})},document:w.document,selId:'g_a',_mapGmailEmail:e=>({...e,id:'g_'+e.id,gmailId:e.id}),_cacheGmailFolder:()=>{},renderEmailBody:()=>{renders++;},renderMailMetadata:()=>{},renderEmailAttachments:()=>{}});
+  vm.runInContext(html.slice(html.indexOf('async function _loadGmailBody('),html.indexOf('function openEmail(')),ctx);
+  ctx.mail={id:'g_a',gmailId:'a',bodyLoaded:false,label:'sent'};
+  const pending=vm.runInContext('_loadGmailBody(mail)',ctx);ctx.selId='g_b';release(Response.json({emails:[{id:'a',body:'Original A',bodyLoaded:true}]}));await pending;
+  assert.equal(renders,0);assert.equal(ctx.mail.bodyLoaded,true);assert.equal(ctx.mail.body,'Original A');assert.equal(ctx.mail.label,'sent');
+  w.happyDOM.abort();
+});

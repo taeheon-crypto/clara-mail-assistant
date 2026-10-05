@@ -52,10 +52,14 @@ export async function gmailFetch(url: URL | string, token: string, signal?: Abor
     const res = await fetch(key, { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store', signal: signal || AbortSignal.timeout(20000) });
     const body = await res.clone().text();
     if (res.status === 429 || (res.status === 403 && /quota|rateLimitExceeded|dailyLimitExceeded/i.test(body))) {
-      a.failures++;
+      const alreadyBlocked = a.blockedUntil > Date.now();
+      if (!alreadyBlocked) a.failures++;
       const header = res.headers.get('Retry-After');
       const specified = header && /^\d+$/.test(header) ? Number(header) * 1000 : header ? Date.parse(header) - Date.now() : 0;
-      a.blockedUntil = Date.now() + Math.max(specified || 0, Math.min(900000, 60000 * 2 ** (a.failures - 1))) + Math.floor(Math.random() * 1000);
+      // Parallel failures are one throttle event, not five new backoffs.
+      a.blockedUntil = alreadyBlocked
+        ? Math.max(a.blockedUntil, Date.now() + (specified || 0))
+        : Date.now() + Math.max(specified || 0, Math.min(120000, 60000 * 2 ** (a.failures - 1))) + Math.floor(Math.random() * 1000);
       return new Response(body, { status: res.status, headers: { 'Content-Type': 'application/json', 'Retry-After': String(Math.ceil((a.blockedUntil - Date.now()) / 1000)) } });
     }
     if (res.ok) {
@@ -80,4 +84,58 @@ export async function gmailFetch(url: URL | string, token: string, signal?: Abor
   })();
   a.pending.set(key, job);
   try { return (await job).clone(); } finally { if (a.pending.get(key) === job) a.pending.delete(key); }
+}
+
+// Gmail supports metadata-only multipart reads. One page uses two HTTP
+// connections (IDs + metadata batch), rather than downloading thirty bodies.
+export async function gmailMetadataBatch(ids: string[], token: string): Promise<Response[]> {
+  const a = accountFor(token), generation = a.generation;
+  const results: Response[] = [], missing: { id: string; index: number; url: string }[] = [];
+  for (const [index, id] of ids.entries()) {
+    const base = `https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=`;
+    const cached = a.cache.get(base + 'metadata') || a.cache.get(base + 'full');
+    if (cached && cached.expires > Date.now()) results[index] = new Response(cached.body);
+    else missing.push({ id, index, url: base + 'metadata' });
+  }
+  if (!missing.length) return results;
+  if (a.blockedUntil > Date.now()) {
+    for (const item of missing) results[item.index] = Response.json({ error: 'rateLimitExceeded' }, { status: 429, headers: { 'Retry-After': String(Math.ceil((a.blockedUntil - Date.now()) / 1000)) } });
+    return results;
+  }
+  const boundary = 'clara_gmail_metadata';
+  const body = missing.map(({ id, index }) => `--${boundary}\r\nContent-Type: application/http\r\nContent-ID: <mail${index}>\r\n\r\nGET /gmail/v1/users/me/messages/${encodeURIComponent(id)}?format=metadata HTTP/1.1\r\n\r\n`).join('') + `--${boundary}--\r\n`;
+  const response = await fetch('https://gmail.googleapis.com/batch', { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': `multipart/mixed; boundary=${boundary}` }, body, cache: 'no-store', signal: AbortSignal.timeout(15000) });
+  if (!response.ok) {
+    const text = await response.text();
+    for (const item of missing) results[item.index] = new Response(text, { status: response.status, headers: response.headers });
+  } else {
+    const delimiter = response.headers.get('Content-Type')?.match(/boundary="?([^";\s]+)/i)?.[1];
+    if (!delimiter) throw new Error('Invalid Gmail batch response');
+    const parts = (await response.text()).split('--' + delimiter);
+    for (const part of parts) {
+      const index = Number(part.match(/Content-ID:\s*<response-mail(\d+)>/i)?.[1]);
+      const item = missing.find(m => m.index === index);
+      const match = part.match(/HTTP\/1\.[01]\s+(\d+)[^\r\n]*\r?\n([\s\S]*?)\r?\n\r?\n([\s\S]*)/);
+      if (!item || !match) continue;
+      const status = Number(match[1]), text = match[3].trim();
+      if (status === 200) {
+        try { if (JSON.parse(text).id !== item.id) continue; } catch { continue; }
+      }
+      const retry = match[2].match(/Retry-After:\s*(\d+)/i)?.[1];
+      results[index] = new Response(text, { status, headers: retry ? { 'Retry-After': retry } : {} });
+      if (status === 200 && a.generation === generation) {
+        removeCached(a, item.url);
+        if (cacheBytes + text.length * 2 < 32 * 1024 * 1024) { a.cache.set(item.url, { body: text, expires: Date.now() + 60000 }); cacheBytes += text.length * 2; }
+      }
+    }
+  }
+  // One failed part must not turn successful rows into a blank page.
+  for (const item of missing) {
+    results[item.index] ||= Response.json({ error: 'missing_batch_part' }, { status: 502 });
+    const r = results[item.index];
+    if (r.status === 429 || (r.status === 403 && /quota|rateLimitExceeded/i.test(await r.clone().text()))) {
+      a.blockedUntil = Math.max(a.blockedUntil, Date.now() + Number(r.headers.get('Retry-After') || 60) * 1000);
+    }
+  }
+  return results;
 }

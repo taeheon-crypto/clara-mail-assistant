@@ -1354,10 +1354,12 @@ const _gmailFolderCache = new Map();
 function _gmailReadFetch(url, options) { return window.ClaraGmailRead ? window.ClaraGmailRead(url, options) : fetch(url, options); }
 let _gmailCacheInvalidated = false;
 let _gmailFolderLoadedAt = 0;
-window.addEventListener('clara-source-changed', function(){ _gmailFolderCache.clear(); _gmailCacheInvalidated = true; });
+window.addEventListener('clara-source-changed', function(){ _gmailFolderCache.clear(); _gmailCacheInvalidated = true; window.ClaraMailboxStore?.clear(); });
 function _cacheGmailFolder() {
   if (_gmailCacheInvalidated || !_gmailConnected || !EMAILS.length || _gmailFetching || _gmailLoadingMore) return;
-  _gmailFolderCache.set(_gmailFolder, { emails: EMAILS.slice(), cursor: _gmailNextPageToken, hasMore: _gmailHasMore, retry: _gmailRetryPage, time: _gmailFolderLoadedAt });
+  const snapshot = { emails: EMAILS.slice(), cursor: _gmailNextPageToken, hasMore: _gmailHasMore, retry: _gmailRetryPage, time: _gmailFolderLoadedAt };
+  _gmailFolderCache.set(_gmailFolder, snapshot);
+  window.ClaraMailboxStore?.save(_gmailFolder, snapshot);
 }
 let _gmailNextPageToken = null;
 let _gmailLoadingMore = false;
@@ -1403,7 +1405,7 @@ function _renderGmailPagingFooter() {
   row.style.cssText = 'padding:14px;text-align:center;color:var(--fg-s);font-size:12px';
   const status = document.createElement('div');
   status.setAttribute('role', 'status');
-  status.textContent = (_gmailFolderNames[_gmailFolder] || '') + ' · ' + EMAILS.length + '개 메일 · ' + (_gmailFetching ? '메일 불러오는 중...' : _gmailLoadingMore ? '이전 메일 불러오는 중...' : _gmailLastError || (_gmailHasMore ? '아래로 스크롤하면 더 불러옵니다.' : '모든 메일을 불러왔습니다.'));
+  status.textContent = (_gmailFolderNames[_gmailFolder] || '') + ' · ' + EMAILS.length + '개 메일 · ' + (_gmailFetching ? (EMAILS.length ? '최신 메일 확인 중...' : '메일 불러오는 중...') : _gmailLoadingMore ? '이전 메일 불러오는 중...' : _gmailLastError || (_gmailHasMore ? '아래로 스크롤하면 더 불러옵니다.' : '모든 메일을 불러왔습니다.'));
   row.appendChild(status);
   if (_gmailHasMore && !_gmailLoadingMore) {
     const button = document.createElement('button');
@@ -1424,7 +1426,7 @@ function _mapGmailEmail(e) {
     sender: e.sender, icon: _gmailIcon(e.sender),
     unread: e.unread, starred: e.starred,
     subject: e.subject, preview: e.preview,
-    date: _gmailShortDate(e.date), dateHeader: e.date || '', body: e.body,
+    date: _gmailShortDate(e.date), dateHeader: e.date || '', body: e.body || '', bodyLoaded: e.bodyLoaded !== false,
     bodyHtml: e.bodyHtml || null,
     original: e.sender + '\n\n' + e.body,
     label: e.mailbox || _gmailFolder, labelIds: e.labelIds || [], project: _gmailFolderNames[e.mailbox || _gmailFolder] || '메일', pDesc: e.subject.slice(0, 50),
@@ -1437,7 +1439,7 @@ function _mapGmailEmail(e) {
 
 async function _gmailFetchMessages(folder) {
   _cacheGmailFolder();
-  const cached = _gmailFolderCache.get(folder || _gmailFolder);
+  let cached = _gmailFolderCache.get(folder || _gmailFolder);
   const generation = ++_gmailFolderGeneration;
   _gmailFolder = folder || _gmailFolder;
   _gmailAbortController?.abort();
@@ -1451,8 +1453,13 @@ async function _gmailFetchMessages(folder) {
   // Startup calls this before the script has initialized EMAILS.
   await Promise.resolve();
   if (generation !== _gmailFolderGeneration) return;
+  const requestedFolder = _gmailFolder;
+  if (!cached && window.ClaraMailboxStore && !_gmailCacheInvalidated) cached = await window.ClaraMailboxStore.load(requestedFolder);
+  if (generation !== _gmailFolderGeneration) return;
+  if (cached?.sourceEmails) cached.emails = cached.sourceEmails.map(_mapGmailEmail);
   EMAILS.length = 0;
   if (cached) {
+    _gmailConnected = true; _gmailScrollCooldownUntil = 0;
     EMAILS.push(...cached.emails);
     _gmailFolderLoadedAt = cached.time;
     _gmailNextPageToken = cached.cursor; _gmailHasMore = cached.hasMore; _gmailRetryPage = cached.retry;
@@ -1497,7 +1504,7 @@ async function _gmailFetchMessages(folder) {
     showToast('Gmail 로드 실패: ' + err.message);
     _gmailLastError = '메일을 불러오지 못했습니다. 편지함을 다시 선택해 주세요.';
   } finally {
-    if (generation === _gmailFolderGeneration) { _gmailFetching = false; _renderGmailPagingFooter(); }
+    if (generation === _gmailFolderGeneration) { _gmailFetching = false; _cacheGmailFolder(); _renderGmailPagingFooter(); }
   }
 }
 
@@ -1547,6 +1554,7 @@ async function _gmailLoadMore(silent) {
   } finally {
     if (generation !== _gmailFolderGeneration) return;
     _gmailLoadingMore = false;
+    _cacheGmailFolder();
     _renderGmailPagingFooter();
     if (!_gmailRetryPage && _gmailHasMore && EMAILS.length < 30) setTimeout(_gmailPrefetchAll, 0);
   }
@@ -3382,6 +3390,7 @@ function renderList() {
 function renderEmailBody(e) {
   const container = document.getElementById('ed-original-content');
   container.innerHTML = '';
+  if (e.bodyLoaded === false) { container.textContent = '메일 본문을 불러오는 중...'; return; }
   if (e.bodyHtml) {
     const iframe = document.createElement('iframe');
     // allow-same-origin: 부모가 iframe 내부 높이를 측정하기 위해 필요 (allow-scripts는 안 줌 → 메일 속 스크립트는 절대 실행 안 됨, 안전)
@@ -3435,6 +3444,34 @@ function renderMailMetadata(e) {
   document.getElementById('to-me-btn').textContent = '받는 사람: ' + to + ' ▾';
   document.getElementById('g-date').textContent = e.date || '';
   document.getElementById('g-date').title = date;
+}
+
+async function _loadGmailBody(e) {
+  _loadGmailBody.pending ||= new Map();
+  if (_loadGmailBody.pending.has(e.gmailId)) return _loadGmailBody.pending.get(e.gmailId);
+  const job = (async () => {
+    try {
+      const url = '/api/gmail/messages?id=' + encodeURIComponent(e.gmailId);
+      const options = { credentials: 'same-origin' };
+      const response = window.ClaraGmailRead ? await window.ClaraGmailRead(url, options, 20) : await fetch(url, options);
+      const data = await response.json();
+      if (!response.ok || !data.emails?.[0] || data.emails[0].id !== e.gmailId) throw new Error('body_unavailable');
+      Object.assign(e, _mapGmailEmail(data.emails[0]), { label:e.label, project:e.project, unread:e.unread });
+      if (selId === e.id) {
+        renderEmailBody(e); renderMailMetadata(e); renderEmailAttachments(e);
+        document.getElementById('ed-body-text').textContent = e.body;
+      }
+      _cacheGmailFolder();
+    } catch {
+      if (selId === e.id) {
+        const container = document.getElementById('ed-original-content');
+        container.textContent = '본문을 불러오지 못했습니다. ';
+        const retry = document.createElement('button'); retry.textContent = '다시 불러오기';
+        retry.onclick = () => { renderEmailBody(e); void _loadGmailBody(e); }; container.appendChild(retry);
+      }
+    } finally { _loadGmailBody.pending.delete(e.gmailId); }
+  })();
+  _loadGmailBody.pending.set(e.gmailId, job); return job;
 }
 
 function openEmail(id) {
@@ -3504,6 +3541,15 @@ function openEmail(id) {
   edView.classList.add('show');
   edView.style.flex = '1';
   edView.style.opacity = '1';
+  renderEmailAttachments(e);
+  if (e.gmailId && e.bodyLoaded === false) void _loadGmailBody(e);
+  // 헤더 별표/플래그 상태 동기화
+  document.getElementById('btn-star')?.classList.toggle('starred', starredIds.has(id));
+  document.getElementById('btn-flag')?.classList.toggle('flagged', pinnedList.includes(id));
+  setTab('original');
+}
+
+function renderEmailAttachments(e) {
   // 첨부파일 렌더링
   const attSection = document.getElementById('att-section');
   const attChips = document.getElementById('att-chips');
@@ -3533,10 +3579,6 @@ function openEmail(id) {
     attSection.style.display = 'none';
     attChips.innerHTML = '';
   }
-  // 헤더 별표/플래그 상태 동기화
-  document.getElementById('btn-star')?.classList.toggle('starred', starredIds.has(id));
-  document.getElementById('btn-flag')?.classList.toggle('flagged', pinnedList.includes(id));
-  setTab('original');
 }
 
 function setTab(t) {
