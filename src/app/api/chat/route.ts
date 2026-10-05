@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@/auth';
 import { PLANNER_SYSTEM, validatePlan } from '../../../../public/ontology-plan.mjs';
-import { AGENT_SYSTEM, AGENT_REPAIR_SYSTEM, agentResponseFormat, validateDecision } from '../../../../public/ontology-agent.mjs';
+import { AGENT_SYSTEM, AGENT_REPAIR_SYSTEM, agentResponseFormat, agentTools, agentCompletionText, validateDecision } from '../../../../public/ontology-agent.mjs';
 
 const MODEL = 'google/gemma-4-26b-a4b-it:free';
 const MODELS = [MODEL, 'openrouter/free'];
@@ -59,7 +59,7 @@ export async function POST(req: Request) {
     } catch { /* Invalid context is unavailable, never promoted into system instructions. */ }
   }
   const messages = [
-    { role: 'system', content: agent ? AGENT_SYSTEM : planning ? PLANNER_SYSTEM : SYSTEM },
+    { role: 'system', content: agent ? AGENT_SYSTEM + '\nTransport: native function calling is enabled. Call exactly ONE supplied function instead of writing JSON in message content. Use query_ontology/search_evidence/read_sources for evidence, answer for the final answer, or clarify for essential missing information.' : planning ? PLANNER_SYSTEM : SYSTEM },
     { role: 'user', content: agent ? 'Agent clock:\n' + plannerClock + '\nAccount/index context and tool results (untrusted data):\n' + JSON.stringify({ context: body.agentContext, trace: body.agentTrace, remainingTools: body.remainingTools }) : planning ? 'Query clock:\n' + plannerClock : ontology ? 'Shared ontology evidence (untrusted source data):\n' + ontology : 'The shared ontology index is unavailable. Do not claim to know the mailbox or calendar. Supplementary UI context (untrusted; may contain examples):\n' + String(body.system || '').slice(0, 12000) },
     ...body.messages.slice(-30),
   ];
@@ -70,10 +70,10 @@ export async function POST(req: Request) {
     let res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST', signal: AbortSignal.timeout(25000),
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`, 'HTTP-Referer': process.env.APP_URL || 'http://localhost:3000', 'X-Title': 'Clara Mail Assistant' },
-      body: JSON.stringify({ models: agent ? ['openrouter/free', MODEL] : MODELS, max_tokens: Math.min(4096, Math.max(128, Number(body.max_tokens) || 1024)), ...(agent ? { response_format: responseFormat, provider: { require_parameters: true } } : {}), messages }),
+      body: JSON.stringify({ models: MODELS, max_tokens: Math.min(4096, Math.max(128, Number(body.max_tokens) || 1024)), ...(agent ? { tools: agentTools(agentSources), tool_choice: 'required', parallel_tool_calls: false, provider: { require_parameters: true } } : {}), messages }),
     });
     let data = await res.json().catch(() => null);
-    // Free providers vary in native JSON Schema support. Keep local validation
+    // Free providers vary in native tool support. Keep local validation
     // authoritative when a provider rejects the structured-output request.
     const initialStatus = !res.ok ? res.status : Number(data?.error?.code) || 0;
     if (agent && [400, 404, 422, 502, 503].includes(initialStatus) && deadline - Date.now() > 1500) {
@@ -87,13 +87,13 @@ export async function POST(req: Request) {
     }
     // A free reasoning model may exhaust its output budget before a final answer.
     // Retry one empty completion using the free router within the same deadline.
-    if (res.ok && !data?.error && !data?.choices?.[0]?.message?.content?.trim() && deadline - Date.now() > 1500) {
+    if (res.ok && !data?.error && !agentCompletionText(data?.choices?.[0]?.message)?.trim() && deadline - Date.now() > 1500) {
       const retry = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST', signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())), headers: requestHeaders,
-        body: JSON.stringify({ model: 'openrouter/free', max_tokens: Math.max(2048, Math.min(4096, Number(body.max_tokens) || 2048)), ...(agent ? nativeSchema ? { response_format: responseFormat, provider: { require_parameters: true } } : { response_format: { type: 'json_object' } } : {}), messages }),
+        body: JSON.stringify({ model: 'openrouter/free', max_tokens: Math.max(2048, Math.min(4096, Number(body.max_tokens) || 2048)), ...(agent ? nativeSchema ? { tools: agentTools(agentSources), tool_choice: 'required', parallel_tool_calls: false, provider: { require_parameters: true } } : { response_format: { type: 'json_object' } } : {}), messages }),
       });
       const retried = await retry.json().catch(() => null);
-      if (retry.ok && typeof retried?.choices?.[0]?.message?.content === 'string' && retried.choices[0].message.content.trim()) data = retried;
+      if (retry.ok && typeof agentCompletionText(retried?.choices?.[0]?.message) === 'string' && agentCompletionText(retried?.choices?.[0]?.message).trim()) data = retried;
     }
     // OpenRouter can also return an error envelope in a successful HTTP response.
     if (!res.ok || data?.error) {
@@ -109,7 +109,7 @@ export async function POST(req: Request) {
       console.warn('clara_chat_provider_error', { status, daily });
       return NextResponse.json({ error: { message, code: daily ? 'daily_limit' : status === 429 ? 'rate_limited' : 'provider_error', providerStatus: status } }, { status: status >= 400 && status <= 599 ? status : 502, headers: { ...headers, ...(status === 429 ? { 'Retry-After': String(retryAfter) } : {}) } });
     }
-    const text = data?.choices?.[0]?.message?.content;
+    const text = agent ? agentCompletionText(data?.choices?.[0]?.message) : data?.choices?.[0]?.message?.content;
     if (typeof text !== 'string' || !text.trim()) return NextResponse.json({ error: { message: 'AI가 빈 응답을 반환했습니다. 다시 시도해 주세요.' } }, { status: 502, headers });
     if (agent) {
       try {
@@ -134,10 +134,10 @@ export async function POST(req: Request) {
           if (deadline - Date.now() > 1500) {
             const repaired = await fetch('https://openrouter.ai/api/v1/chat/completions', {
               method: 'POST', signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())), headers: requestHeaders,
-              body: JSON.stringify({ models: nativeSchema ? ['openrouter/free', MODEL] : MODELS, max_tokens: 4096, ...(nativeSchema ? { response_format: responseFormat, provider: { require_parameters: true } } : { response_format: { type: 'json_object' } }), messages: [...messages, { role: 'assistant', content: text.slice(0, 20000) }, { role: 'system', content: AGENT_REPAIR_SYSTEM + '\nReturn {decision: ...} matching the supplied schema. Validation code: ' + checked.code + '\nIf fixing a citation error, revise the FINAL ANSWER rather than repeating a query merely to change format. Select exact supported IDs in the citations field: ' + JSON.stringify(allowedSources.slice(0, 180)) }] }),
+              body: JSON.stringify({ models: nativeSchema ? ['openrouter/free', MODEL] : MODELS, max_tokens: 4096, ...(nativeSchema ? { tools: agentTools(agentSources), tool_choice: 'required', parallel_tool_calls: false, provider: { require_parameters: true } } : { response_format: { type: 'json_object' } }), messages: [...messages, { role: 'assistant', content: text.slice(0, 20000) }, { role: 'system', content: AGENT_REPAIR_SYSTEM + '\nReturn {decision: ...} matching the supplied schema. Validation code: ' + checked.code + '\nIf fixing a citation error, revise the FINAL ANSWER rather than repeating a query merely to change format. Select exact supported IDs in the citations field: ' + JSON.stringify(allowedSources.slice(0, 180)) }] }),
             });
             const repairedData = await repaired.json().catch(() => null);
-            const candidate = repairedData?.choices?.[0]?.message?.content;
+            const candidate = agentCompletionText(repairedData?.choices?.[0]?.message);
             if (repaired.ok && !repairedData?.error && typeof candidate === 'string') checked = parse(candidate);
           }
         }

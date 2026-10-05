@@ -4,13 +4,13 @@ import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import ts from 'typescript';
 import { PLANNER_SYSTEM, validatePlan } from '../public/ontology-plan.mjs';
-import { AGENT_SYSTEM, AGENT_REPAIR_SYSTEM, AGENT_RESPONSE_FORMAT, agentResponseFormat, validateDecision } from '../public/ontology-agent.mjs';
+import { AGENT_SYSTEM, AGENT_REPAIR_SYSTEM, AGENT_RESPONSE_FORMAT, agentResponseFormat, agentTools, agentCompletionText, validateDecision } from '../public/ontology-agent.mjs';
 
 async function route(path, { session = { user: { email: 'me@example.com' }, accessToken: 'test-token' }, fetch: fetchStub = () => { throw new Error('Unexpected network call'); } } = {}) {
   const source = await readFile(new URL('../src/app/api/' + path + '/route.ts', import.meta.url), 'utf8');
   const js = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   const exports = {};
-  vm.runInNewContext(js, { exports, console: { warn() {} }, require(name) { if (name === '@/auth') return { auth: async () => session }; if (name === 'next/server') return { NextResponse: { json: Response.json } }; if (name.endsWith('/ontology-plan.mjs')) return { PLANNER_SYSTEM, validatePlan }; if (name.endsWith('/ontology-agent.mjs')) return { AGENT_SYSTEM, AGENT_REPAIR_SYSTEM, AGENT_RESPONSE_FORMAT, agentResponseFormat, validateDecision }; throw new Error(name); }, fetch: fetchStub, URL, Buffer, AbortSignal, Request, Response, process: { env: { OPENROUTER_API_KEY: 'test-key' } } });
+  vm.runInNewContext(js, { exports, console: { warn() {} }, require(name) { if (name === '@/auth') return { auth: async () => session }; if (name === 'next/server') return { NextResponse: { json: Response.json } }; if (name.endsWith('/ontology-plan.mjs')) return { PLANNER_SYSTEM, validatePlan }; if (name.endsWith('/ontology-agent.mjs')) return { AGENT_SYSTEM, AGENT_REPAIR_SYSTEM, AGENT_RESPONSE_FORMAT, agentResponseFormat, agentTools, agentCompletionText, validateDecision }; throw new Error(name); }, fetch: fetchStub, URL, Buffer, AbortSignal, Request, Response, process: { env: { OPENROUTER_API_KEY: 'test-key' } } });
   return exports;
 }
 test('sync endpoints reject unauthenticated calls without contacting Google', async () => {
@@ -130,7 +130,18 @@ test('schema-wrapped responses and exact aggregate evidence are accepted without
   assert.equal((await r.POST(request([{ name: 'search_evidence', output: { nodes: [{ id: 'mail:real' }] } }]))).status, 502);
 });
 
-test('native schema rejection falls back to JSON while retaining evidence validation', async () => {
+test('native tool calls with null content are adapted and validated before execution', async () => {
+  const r = await route('chat', { fetch: async () => Response.json({ choices: [{ message: { content: null, tool_calls: [{ function: { name: 'query_ontology', arguments: JSON.stringify({ plan: { operation: 'aggregate', types: ['Email'], scope: 'all', groupBy: 'person', direction: 'exchanged', order: 'desc', limit: 1 } }) } }] } }] }) });
+  const res = await r.POST(new Request('https://clara.test/api/chat', { method: 'POST', body: JSON.stringify({ mode: 'ontology_agent', remainingTools: 6, agentContext: { accountEmail: 'me@example.com', timeZone: 'Asia/Seoul' }, agentTrace: [], messages: [{ role: 'user', content: 'Who do I exchange most emails with?' }] }) }));
+  assert.equal(res.status, 200);
+  const data = await res.json();
+  assert.equal(data.decision.name, 'query_ontology');
+  assert.equal(data.decision.arguments.plan.direction, 'exchanged');
+  assert.equal(agentCompletionText({ tool_calls: [{ function: { name: 'answer', arguments: '{bad' } }] }), '{}');
+  assert.equal(validateDecision(JSON.parse(agentCompletionText({ tool_calls: [{ function: { name: 'delete_mail', arguments: '{}' } }] })).decision).decision, undefined);
+});
+
+test('native tool rejection falls back to JSON while retaining evidence validation', async () => {
   const sent = [];
   const r = await route('chat', { fetch: async (_url, opts) => {
     sent.push(JSON.parse(opts.body));
@@ -152,7 +163,7 @@ test('AI-selected structured citations are constrained to real tool evidence and
   const response = await r.POST(req());
   assert.equal(response.status, 200);
   assert.match((await response.json()).decision.text, /근거: \[ontology:query\]/);
-  const schema = sent.response_format.json_schema.schema.properties.decision.anyOf[0].properties.citations;
+  const schema = sent.tools.find(t => t.function.name === 'answer').function.parameters.properties.citations;
   assert.equal(schema.minItems, 1); assert.deepEqual(schema.items.enum, ['mail:real', 'ontology:query']);
   decision.citations = ['mail:invented'];
   assert.equal((await r.POST(req())).status, 502);
@@ -168,8 +179,8 @@ test('agent repairs an invalid tool decision once before returning it to the exe
   const res = await r.POST(new Request('https://clara.test/api/chat', { method: 'POST', body: JSON.stringify({ mode: 'ontology_agent', remainingTools: 6, agentContext: { accountEmail: 'me@example.com', timeZone: 'Asia/Seoul' }, agentTrace: [], messages: [{ role: 'user', content: '나랑 최근에 이메일 가장 많이 주고받은 사람 누구?' }] }) }));
   assert.equal(res.status, 200); assert.equal(sent.length, 2);
   assert.equal((await res.json()).decision.arguments.plan.direction, 'exchanged');
-  assert.equal(sent[0].response_format.type, 'json_schema');
-  assert.equal(sent[0].response_format.json_schema.strict, true);
+  assert.equal(sent[0].tool_choice, 'required');
+  assert.equal(sent[0].tools.length, 5);
   assert.equal(sent[0].provider.require_parameters, true);
   assert.match(sent[1].messages.at(-1).content, /aggregate_direction_required/);
 });
