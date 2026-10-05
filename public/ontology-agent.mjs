@@ -18,12 +18,20 @@ const planSchema = object({
 const planRef = { '$ref': '#/$defs/plan' };
 export const AGENT_RESPONSE_FORMAT = { type: 'json_schema', json_schema: { name: 'clara_agent_decision', strict: true, schema: {
   ...object({ decision: { anyOf: [
-    object({ action: { enum: ['answer', 'clarify'] }, text: { type: 'string' } }),
+    object({ action: { const: 'answer' }, text: { type: 'string' }, citations: { type: 'array', maxItems: 12, items: { type: 'string' } } }),
+    object({ action: { const: 'clarify' }, text: { type: 'string' } }),
     object({ action: { const: 'tool' }, name: { const: 'query_ontology' }, arguments: object({ plan: planRef }) }),
     object({ action: { const: 'tool' }, name: { const: 'search_evidence' }, arguments: object({ question: { type: 'string' }, plan: { anyOf: [planRef, { type: 'null' }] } }) }),
     object({ action: { const: 'tool' }, name: { const: 'read_sources' }, arguments: object({ ids: { type: 'array', minItems: 1, maxItems: 6, items: { type: 'string' } } }) }),
   ] } }), '$defs': { plan: planSchema },
 } } };
+export function agentResponseFormat(sourceIds = []) {
+  const format = JSON.parse(JSON.stringify(AGENT_RESPONSE_FORMAT));
+  const sources = [...new Set(sourceIds)].slice(0, 180);
+  const answer = format.json_schema.schema.properties.decision.anyOf[0];
+  answer.properties.citations = { type: 'array', minItems: sources.length ? 1 : 0, maxItems: sources.length ? 12 : 0, items: sources.length ? { enum: sources } : { type: 'string' } };
+  return format;
+}
 
 export const AGENT_SYSTEM = `You are Clara, an AI agent embedded in the user's mail/calendar application.
 Understand EVERY latest user request using conversation context, including colloquial language, general conversation, follow-up references, comparisons, analysis and drafts. There is no whitelist of question phrases.
@@ -31,7 +39,7 @@ Choose tools, inspect their results, and choose another tool when more evidence 
 {"action":"tool","name":"query_ontology","arguments":{"plan":PLAN}}
 {"action":"tool","name":"search_evidence","arguments":{"question":"search wording","plan":OPTIONAL_PLAN}}
 {"action":"tool","name":"read_sources","arguments":{"ids":["source ID returned by an earlier tool"]}}
-{"action":"answer","text":"your final answer in the user's language"}
+{"action":"answer","text":"your final answer in the user's language","citations":["EXACT evidence ID allowed by the schema"]}
 {"action":"clarify","text":"one specific question about missing information"}
 query_ontology executes exact filters/counts/rankings across the FULL indexed account graph. Use it for counts and exhaustive queries, never count search samples. search_evidence uses lexical passage retrieval and graph relationships; try alternative descriptive terms if necessary. Optional plan restricts search by dates, types and relationships. Semantic judgments (urgent, topic, risk, importance) belong to YOU after retrieving and reading evidence; do not treat them as unsupported query grammar or require the user to rephrase into a template. read_sources reads bounded source text; long sources explicitly indicate truncation.
 Answer greetings, explanations and general knowledge directly when no private evidence is needed. For mailbox/calendar facts, call tools first and cite returned source IDs as [mail:ID] or [event:CALENDAR:ID]. Never invent counts, sources, people, deadlines, or successful actions. Explain uncertainty, partial indexing and evidence sampling. No evidence is not proof of absence. Invitations are not proof of actual attendance. Candidate tasks/projects are not confirmed facts.
@@ -41,7 +49,7 @@ Maximum 6 tool calls per turn. At the last decision, answer with available evide
 Tool plans: operation=list|count|aggregate|reason; types=[Email|Event|Task|Document]; scope=all|received|sent|inbox. Dates start/endExclusive use YYYY-MM-DD, end is exclusive; null means no date restriction. Weeks start Monday; for recent without a duration use the last 30 local calendar days including today and explain this assumption.
 filters=[{name,relation:from|to|related|project,entityType,path}]; names resolve against real identities, never invented addresses. Multiple filters and literal keywords are AND. Graph paths use explicit relation names and in/out directions, maximum four steps. Unused entityType/path/read/unread/groupBy/direction/order/limit are null; unused arrays are empty. Do not turn semantic judgments like urgency into literal keyword constraints: query a broad relevant date/source range and then search/read the evidence.
 aggregate REQUIRES groupBy and direction. Most correspondence: operation=aggregate, types=[Email], scope=all, groupBy=person, direction=exchanged, order=desc, limit=1. Received/sent rankings use the corresponding scope and direction. People/domain ranks support mail and events; event direction is exchanged and invitees who declined are excluded. Lists support date order and limit; counts and reason have null order/limit. These are tool capabilities, not a whitelist of questions.
-For computed count/rank facts you may cite [ontology:query] only when a successful exact query tool returned the result. Source-content claims require the exact mail/event IDs returned by tools. Never cite a person ID as an original mail source.`;
+For final answers select citations from the schema's allowed source IDs. General conversation before tools uses citations=[]. Put source IDs in the citations field; Clara renders citation brackets, so you do not need to type them in the text. For computed count/rank facts select ontology:query only when an exact query produced the result. Source-content claims require the exact mail/event IDs returned by tools. Never cite a person ID as an original mail source.`;
 
 export const AGENT_REPAIR_SYSTEM = `Correct your previous response into ONE valid Clara agent JSON decision. Preserve the user's intent and ALL meaningful filters; do not invent addresses or silently discard unsupported conditions. Use action=tool with name=query_ontology and arguments={plan:{...}}, or search_evidence with arguments={question:string,plan?:...}, or read_sources with arguments={ids:[...]}; action=answer|clarify requires text. Aggregate plans require types, scope, groupBy AND direction. For email correspondence: types=["Email"], scope="all", groupBy="person", direction="exchanged", order="desc", limit=1. Omit unused optional fields instead of null. Unknown tool/operation names are forbidden. If information is genuinely missing, return action=clarify with a specific question. Return JSON only.`;
 
@@ -75,7 +83,9 @@ export function validateDecision(value) {
   const fail = (code = 'decision_schema_mismatch') => ({ error: 'AI 에이전트의 도구 요청을 검증하지 못했습니다.', code });
   if (!plain(value)) return fail();
   if (['answer', 'clarify'].includes(value.action)) {
-    return Object.keys(value).every(k => ['action', 'text'].includes(k)) && typeof value.text === 'string' && value.text.trim() && value.text.length <= 20000 ? { decision: value } : fail();
+    const allowed = value.action === 'answer' ? ['action', 'text', 'citations'] : ['action', 'text'];
+    if (value.citations !== undefined && (!Array.isArray(value.citations) || value.citations.length > 12 || value.citations.some(id => typeof id !== 'string' || id.length > 500 || !/^(?:mail:|event:|ontology:query$)/.test(id)))) return fail('citation_schema_mismatch');
+    return Object.keys(value).every(k => allowed.includes(k)) && typeof value.text === 'string' && value.text.trim() && value.text.length <= 20000 ? { decision: value } : fail();
   }
   if (value.action !== 'tool' || Object.keys(value).some(k => !['action', 'name', 'arguments'].includes(k)) || !plain(value.arguments)) return fail();
   const args = value.arguments;
