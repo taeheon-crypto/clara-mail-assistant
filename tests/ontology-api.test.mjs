@@ -32,6 +32,24 @@ test('sync endpoints reject unauthenticated calls without contacting Google', as
   const r = await route('ontology/sync', { session: null });
   assert.equal((await r.GET(new Request('https://clara.test/api/ontology/sync?source=mail'))).status, 401);
 });
+test('long and externally stored original mail bodies are read completely in resumable chunks', async () => {
+  const full = 'A'.repeat(24000) + 'IMPORTANT FACT BEYOND THE OLD INDEX CAP' + 'B'.repeat(55000);
+  const urls = [];
+  const r = await route('ontology/sync', { fetch: async url => {
+    urls.push(String(url));
+    return Response.json(String(url).includes('/attachments/') ? { data: Buffer.from(full).toString('base64url') } : { id: 'long', payload: { mimeType: 'text/plain', body: { attachmentId: 'large-body' } } });
+  } });
+  let offset = 0, combined = '';
+  do {
+    const res = await r.GET(new Request('https://clara.test/api/ontology/sync?source=mail_body&id=long&offset=' + offset));
+    assert.equal(res.status, 200);
+    const data = await res.json(); assert.equal(data.id, 'mail:long'); assert.equal(data.totalChars, full.length);
+    combined += data.text; offset = data.nextOffset;
+  } while (offset !== null);
+  assert.equal(combined, full); assert.ok(urls.some(url => url.includes('/attachments/large-body')));
+  assert.equal((await r.GET(new Request('https://clara.test/api/ontology/sync?source=mail_body&id=../invalid'))).status, 400);
+});
+
 test('mail sync covers all folders, preserves dates/recipients, and returns continuation', async () => {
   const urls = [];
   const r = await route('ontology/sync', { fetch: async url => {
