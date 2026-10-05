@@ -2,6 +2,27 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { runAgent, validateDecision } from '../public/ontology-agent.mjs';
 
+test('normal wire variations preserve every meaningful plan constraint', () => {
+  const input = { operation: 'aggregate', types: 'Email', scope: 'sent', groupBy: 'person', direction: 'sent', limit: '1', start: '2026-09-01', endExclusive: '2026-10-01', unread: null, read: null, keywords: null, assumptions: null, filters: [{ name: 'founder@example.com', relation: 'to', entityType: null, path: null }] };
+  for (const args of [{ plan: input }, input]) {
+    const checked = validateDecision({ action: 'tool', name: 'query_ontology', arguments: args });
+    assert.ok(checked.decision);
+    const plan = checked.decision.arguments.plan;
+    assert.equal(plan.scope, 'sent'); assert.equal(plan.direction, 'sent');
+    assert.equal(plan.limit, 1); assert.deepEqual(plan.types, ['Email']);
+    assert.deepEqual(plan.filters, [{ name: 'founder@example.com', relation: 'to' }]);
+    assert.equal(plan.start, '2026-09-01');
+  }
+  assert.equal(input.unread, null);
+  assert.ok(validateDecision({ action: 'tool', name: 'query_ontology', arguments: { plan: { ...input, execute: 'delete()' } } }).error);
+  assert.ok(validateDecision({ action: 'tool', name: 'search_evidence', arguments: { question: 'launch', plan: null } }).decision);
+});
+
+test('missing aggregate direction is diagnosed for AI repair, never guessed or executed', () => {
+  const checked = validateDecision({ action: 'tool', name: 'query_ontology', arguments: { plan: { operation: 'aggregate', types: ['Email'], scope: 'all', groupBy: 'person' } } });
+  assert.equal(checked.code, 'aggregate_direction_required');
+});
+
 test('agent searches, reads evidence, then answers rather than matching question grammar', async () => {
   let turn = 0;
   const executed = [];
