@@ -4,13 +4,13 @@ import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import ts from 'typescript';
 import { PLANNER_SYSTEM, validatePlan } from '../public/ontology-plan.mjs';
-import { AGENT_SYSTEM, validateDecision } from '../public/ontology-agent.mjs';
+import { AGENT_SYSTEM, AGENT_REPAIR_SYSTEM, validateDecision } from '../public/ontology-agent.mjs';
 
 async function route(path, { session = { user: { email: 'me@example.com' }, accessToken: 'test-token' }, fetch: fetchStub = () => { throw new Error('Unexpected network call'); } } = {}) {
   const source = await readFile(new URL('../src/app/api/' + path + '/route.ts', import.meta.url), 'utf8');
   const js = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   const exports = {};
-  vm.runInNewContext(js, { exports, console: { warn() {} }, require(name) { if (name === '@/auth') return { auth: async () => session }; if (name === 'next/server') return { NextResponse: { json: Response.json } }; if (name.endsWith('/ontology-plan.mjs')) return { PLANNER_SYSTEM, validatePlan }; if (name.endsWith('/ontology-agent.mjs')) return { AGENT_SYSTEM, validateDecision }; throw new Error(name); }, fetch: fetchStub, URL, Buffer, AbortSignal, Request, Response, process: { env: { OPENROUTER_API_KEY: 'test-key' } } });
+  vm.runInNewContext(js, { exports, console: { warn() {} }, require(name) { if (name === '@/auth') return { auth: async () => session }; if (name === 'next/server') return { NextResponse: { json: Response.json } }; if (name.endsWith('/ontology-plan.mjs')) return { PLANNER_SYSTEM, validatePlan }; if (name.endsWith('/ontology-agent.mjs')) return { AGENT_SYSTEM, AGENT_REPAIR_SYSTEM, validateDecision }; throw new Error(name); }, fetch: fetchStub, URL, Buffer, AbortSignal, Request, Response, process: { env: { OPENROUTER_API_KEY: 'test-key' } } });
   return exports;
 }
 test('sync endpoints reject unauthenticated calls without contacting Google', async () => {
@@ -120,6 +120,32 @@ test('agent accepts arbitrary conversational intent and returns a validated tool
   assert.equal((await res.json()).decision.name, 'search_evidence');
   assert.match(sent.messages[0].content, /There is no whitelist/);
   assert.match(sent.messages[1].content, /Agent clock/);
+});
+
+test('agent repairs an invalid tool decision once before returning it to the executor', async () => {
+  const sent = [];
+  const good = { action: 'tool', name: 'query_ontology', arguments: { plan: { operation: 'aggregate', types: ['Email'], scope: 'all', groupBy: 'person', direction: 'exchanged', limit: 1 } } };
+  const r = await route('chat', { fetch: async (_url, opts) => {
+    sent.push(JSON.parse(opts.body));
+    return Response.json({ choices: [{ message: { content: JSON.stringify(sent.length === 1 ? { ...good, arguments: { plan: { ...good.arguments.plan, direction: null } } } : good) } }] });
+  } });
+  const res = await r.POST(new Request('https://clara.test/api/chat', { method: 'POST', body: JSON.stringify({ mode: 'ontology_agent', remainingTools: 6, agentContext: { accountEmail: 'me@example.com', timeZone: 'Asia/Seoul' }, agentTrace: [], messages: [{ role: 'user', content: '나랑 최근에 이메일 가장 많이 주고받은 사람 누구?' }] }) }));
+  assert.equal(res.status, 200); assert.equal(sent.length, 2);
+  assert.equal((await res.json()).decision.arguments.plan.direction, 'exchanged');
+  assert.equal(sent[0].response_format.type, 'json_object');
+  assert.match(sent[1].messages.at(-1).content, /aggregate_direction_required/);
+});
+
+test('malformed JSON is repaired; persistent invalid decisions never reach an executor', async () => {
+  const request = () => new Request('https://clara.test/api/chat', { method: 'POST', body: JSON.stringify({ mode: 'ontology_agent', remainingTools: 6, agentContext: { accountEmail: 'me@example.com', timeZone: 'Asia/Seoul' }, agentTrace: [], messages: [{ role: 'user', content: 'Hello' }] }) });
+  let calls = 0;
+  const repaired = await route('chat', { fetch: async () => Response.json({ choices: [{ message: { content: ++calls === 1 ? 'not JSON' : JSON.stringify({ action: 'answer', text: 'Hello!' }) } }] }) });
+  assert.equal((await repaired.POST(request())).status, 200); assert.equal(calls, 2);
+  calls = 0;
+  const bad = await route('chat', { fetch: async () => { calls++; return Response.json({ choices: [{ message: { content: JSON.stringify({ action: 'tool', name: 'delete_mail', arguments: {} }) } }] }); } });
+  const response = await bad.POST(request());
+  assert.equal(response.status, 502); assert.equal(calls, 2);
+  assert.equal((await response.json()).error.code, 'agent_invalid_decision');
 });
 
 test('agent final citations must belong to tool evidence and unsafe tools are rejected', async () => {

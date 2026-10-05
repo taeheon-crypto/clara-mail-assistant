@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@/auth';
 import { PLANNER_SYSTEM, validatePlan } from '../../../../public/ontology-plan.mjs';
-import { AGENT_SYSTEM, validateDecision } from '../../../../public/ontology-agent.mjs';
+import { AGENT_SYSTEM, AGENT_REPAIR_SYSTEM, validateDecision } from '../../../../public/ontology-agent.mjs';
 
 const MODEL = 'google/gemma-4-26b-a4b-it:free';
 const MODELS = [MODEL, 'openrouter/free'];
@@ -64,7 +64,7 @@ export async function POST(req: Request) {
     const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST', signal: AbortSignal.timeout(25000),
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`, 'HTTP-Referer': process.env.APP_URL || 'http://localhost:3000', 'X-Title': 'Clara Mail Assistant' },
-      body: JSON.stringify({ models: MODELS, max_tokens: Math.min(4096, Math.max(128, Number(body.max_tokens) || 1024)), messages }),
+      body: JSON.stringify({ models: MODELS, max_tokens: Math.min(4096, Math.max(128, Number(body.max_tokens) || 1024)), ...(agent ? { response_format: { type: 'json_object' } } : {}), messages }),
     });
     let data = await res.json().catch(() => null);
     // A free reasoning model may exhaust its output budget before a final answer.
@@ -72,7 +72,7 @@ export async function POST(req: Request) {
     if (res.ok && !data?.error && !data?.choices?.[0]?.message?.content?.trim() && deadline - Date.now() > 1500) {
       const retry = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST', signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())), headers: requestHeaders,
-        body: JSON.stringify({ model: 'openrouter/free', max_tokens: Math.max(2048, Math.min(4096, Number(body.max_tokens) || 2048)), messages }),
+        body: JSON.stringify({ model: 'openrouter/free', max_tokens: Math.max(2048, Math.min(4096, Number(body.max_tokens) || 2048)), ...(agent ? { response_format: { type: 'json_object' } } : {}), messages }),
       });
       const retried = await retry.json().catch(() => null);
       if (retry.ok && typeof retried?.choices?.[0]?.message?.content === 'string' && retried.choices[0].message.content.trim()) data = retried;
@@ -95,8 +95,25 @@ export async function POST(req: Request) {
     if (typeof text !== 'string' || !text.trim()) return NextResponse.json({ error: { message: 'AI가 빈 응답을 반환했습니다. 다시 시도해 주세요.' } }, { status: 502, headers });
     if (agent) {
       try {
-        const checked = validateDecision(JSON.parse(text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')));
-        if ('error' in checked) return NextResponse.json({ error: { message: checked.error } }, { status: 502, headers });
+        const parse = (candidate: string) => {
+          try { return validateDecision(JSON.parse(candidate.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, ''))); }
+          catch { return { error: 'AI 응답 JSON 형식을 확인하지 못했습니다.', code: 'invalid_json' }; }
+        };
+        let checked = parse(text);
+        if ('error' in checked) {
+          // Shape-only diagnostics: never log generated text, source data or tokens.
+          console.warn('clara_agent_invalid_decision', { code: checked.code });
+          if (deadline - Date.now() > 1500) {
+            const repaired = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+              method: 'POST', signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())), headers: requestHeaders,
+              body: JSON.stringify({ models: MODELS, max_tokens: 4096, response_format: { type: 'json_object' }, messages: [...messages, { role: 'assistant', content: text.slice(0, 20000) }, { role: 'system', content: AGENT_REPAIR_SYSTEM + '\nValidation code: ' + checked.code }] }),
+            });
+            const repairedData = await repaired.json().catch(() => null);
+            const candidate = repairedData?.choices?.[0]?.message?.content;
+            if (repaired.ok && !repairedData?.error && typeof candidate === 'string') checked = parse(candidate);
+          }
+        }
+        if ('error' in checked) return NextResponse.json({ error: { message: 'AI가 도구 요청 형식을 맞추지 못했고 자동 복구도 완료하지 못했습니다. 조건을 바꾸지 말고 잠시 후 다시 시도해 주세요.', code: 'agent_invalid_decision', validationCode: checked.code } }, { status: 502, headers });
         const decision = checked.decision;
         if (decision.action === 'tool' && body.remainingTools === 0) return NextResponse.json({ error: { message: 'AI가 도구 조회 한도 안에 답변을 마무리하지 못했습니다.' } }, { status: 502, headers });
         if (decision.action === 'answer') {
