@@ -1,4 +1,4 @@
-// All six chat surfaces share deterministic queries and the same evidence graph.
+// All six chat surfaces enter the same AI-led tool loop.
 window._claraChatFetch = async function(url, options) {
   const payload = JSON.parse(options.body);
   const lastUser = [...(payload.messages || [])].reverse().find(m => m.role === 'user');
@@ -9,8 +9,10 @@ window._claraChatFetch = async function(url, options) {
     if (current?.gmailId) focusId = 'mail:' + current.gmailId;
   }
   if (window.ClaraOntology) {
-    const answer = await window.ClaraOntology.query?.(question);
-    if (answer) return Response.json({ content: [{ text: answer.text }], knowledgeSource: 'ontology', answerMode: answer.kind });
+    if (window.ClaraOntology.agent) {
+      const answer = await window.ClaraOntology.agent(question, { messages: payload.messages, focusId });
+      return Response.json({ content: [{ text: answer.text }], knowledgeSource: 'ontology-agent', answerMode: answer.kind });
+    }
     payload.ontologyContext = await window.ClaraOntology.context(question, focusId);
   }
   let response;

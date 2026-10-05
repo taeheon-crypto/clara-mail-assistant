@@ -11,6 +11,7 @@ type GoogleRecord = {
   recurringEventId?: string; originalStartTime?: Record<string, string>;
   location?: string; attendees?: { email?: string; displayName?: string }[];
   organizer?: { email?: string; displayName?: string }; recurrence?: string[]; htmlLink?: string;
+  iCalUID?: string; updated?: string;
 };
 type GoogleResponse = GoogleRecord & { messages?: GoogleRecord[]; items?: GoogleRecord[]; nextPageToken?: string; resultSizeEstimate?: number };
 const privateHeaders = { 'Cache-Control': 'private, no-store' };
@@ -37,6 +38,18 @@ function mailText(part: MailPart): string {
 }
 function attachments(part: MailPart): Record<string, unknown>[] {
   return [...(part.filename ? [{ name: part.filename, attachmentId: part.body?.attachmentId, mimeType: part.mimeType }] : []), ...(part.parts || []).flatMap(attachments)];
+}
+function calendarUIDs(part: MailPart): string[] {
+  const values: string[] = [];
+  const visit = (node: MailPart) => {
+    // Inline calendar MIME data only. Do not claim to have downloaded an attachment.
+    if (node.mimeType === 'text/calendar' && node.body?.data) {
+      const calendar = Buffer.from(node.body.data, 'base64url').toString('utf8').replace(/\r?\n[ \t]/g, '');
+      for (const m of calendar.matchAll(/^UID(?:;[^:\r\n]*)?:([^\r\n]{1,500})\r?$/gm)) values.push(m[1].trim());
+    }
+    for (const child of node.parts || []) visit(child);
+  };
+  visit(part); return [...new Set(values)];
 }
 export async function GET(req: Request) {
   const session = await auth();
@@ -75,6 +88,7 @@ export async function GET(req: Request) {
           id: mail.id, threadId: mail.threadId, subject: header(h, 'Subject'),
           sender: from.replace(/<[^>]+>/g, '').replace(/"/g, '').trim(), senderEmail,
           toHeader: header(h, 'To'), ccHeader: header(h, 'Cc'),
+          messageId: header(h, 'Message-ID'), inReplyTo: header(h, 'In-Reply-To'), calendarUIDs: calendarUIDs(mail.payload || {}), observedAt: new Date().toISOString(),
           dateISO: new Date(Number(mail.internalDate)).toISOString(), labelIds: mail.labelIds || [],
           body: (mailText(mail.payload || {}) || mail.snippet || '').slice(0, 24000),
           attachments: attachments(mail.payload || {})
@@ -113,7 +127,8 @@ export async function GET(req: Request) {
       const records = (data.items || []).filter((e: GoogleRecord) => e.status !== 'cancelled').map((e: GoogleRecord) => ({
         id: e.id, calendarId, title: e.summary, start: e.start, end: e.end,
         description: e.description, location: e.location, attendees: e.attendees,
-        organizer: e.organizer, recurrence: e.recurrence, recurringEventId: e.recurringEventId, originalStartTime: e.originalStartTime, htmlLink: e.htmlLink
+        organizer: e.organizer, recurrence: e.recurrence, recurringEventId: e.recurringEventId, originalStartTime: e.originalStartTime, htmlLink: e.htmlLink,
+        iCalUID: e.iCalUID, updated: e.updated, observedAt: new Date().toISOString()
       }));
       return NextResponse.json({ records, cursor: data.nextPageToken || null }, { headers: privateHeaders });
     }

@@ -17,9 +17,23 @@ test('UI indexes both sources, stores confirmed links, restores them, and isolat
     globalThis.indexedDB = indexedDB;
     globalThis.prompt = () => 'Atlas';
     globalThis.setTimeout = (cb, ms, ...args) => originalTimeout(cb, Math.min(ms || 0, 1), ...args);
-    globalThis.fetch = async url => {
+    globalThis.fetch = async (url, opts) => {
       requests++;
       if (url === '/api/auth/session') return Response.json({ user: { email } });
+      if (url === '/api/chat') {
+        const body = JSON.parse(opts.body);
+        if (body.mode === 'ontology_agent') {
+          const trace = body.agentTrace;
+          if (!trace.length) return Response.json({ decision: { action: 'tool', name: 'query_ontology', arguments: { plan: { operation: 'list', types: ['Email'], scope: 'received' } } } });
+          if (trace.length === 1) return Response.json({ decision: { action: 'tool', name: 'read_sources', arguments: { ids: [trace[0].output.nodes[0].id] } } });
+          return Response.json({ decision: { action: 'answer', text: '요청하신 자료를 확인했습니다. [mail:page124]' } });
+        }
+        assert.equal(body.mode, 'ontology_plan');
+        assert.ok(!body.ontologyContext);
+        const question = body.messages.at(-1).content;
+        if (question === '모델 한도 테스트') return Response.json({ error: { message: '무료 AI 한도' } }, { status: 429 });
+        return Response.json({ plan: { operation: 'aggregate', types: ['Email'], scope: 'all', groupBy: 'person', direction: 'exchanged', order: 'desc', limit: 1 } });
+      }
       const source = new URL(url, 'https://clara.test').searchParams.get('source');
       const empty = email === 'other@example.com';
       const paged = email === 'pages@example.com';
@@ -81,6 +95,27 @@ test('UI indexes both sources, stores confirmed links, restores them, and isolat
     assert.equal(resumedCalendar.complete,true); assert.equal(resumedCalendar.total,2);
     assert.match(resumedCalendar.text,/Google에서 이 기간의 반복 일정/);
 
+    const rank = await paged.ClaraOntology.query('나랑 최근에 가장 많이 메일 주고받은 사람 누구임?');
+    assert.equal(rank.kind, 'aggregate'); assert.equal(rank.groups[0].count, 125);
+    assert.equal(rank.groups[0].email, 'founder@example.com');
+    assert.equal(paged.document.querySelectorAll('#ont-list [data-node]').length, 50);
+    paged.document.getElementById('ont-next').click();
+    paged.document.getElementById('ont-next').click();
+    assert.equal(paged.document.querySelectorAll('#ont-list [data-node]').length, 25);
+    assert.match(paged.document.getElementById('ont-status').textContent, /125/);
+    const limited = await paged.ClaraOntology.query('모델 한도 테스트');
+    assert.match(limited.text, /무료 AI 한도/);
+    assert.match(limited.text, /집계를 실행하지 않았습니다/);
+    assert.match(paged.document.getElementById('ont-status').textContent, /무료 AI 한도/);
+    assert.equal(paged.document.querySelectorAll('#ont-list [data-node]').length, 0);
+    assert.equal((await paged.ClaraOntology.query('전체 메일 몇개야?')).total, 125);
+    const agent = await paged.ClaraOntology.agent('이번엔 내가 신경써야 하는 게 뭔지 맥락을 보고 판단해봐', { messages: [{ role: 'assistant', content: '지원사업 자료를 확인하겠습니다.' }] });
+    assert.equal(agent.kind, 'answer');
+    assert.deepEqual(agent.trace.map(t => t.name), ['query_ontology', 'read_sources']);
+    assert.equal(agent.trace[0].output.total, 125);
+    assert.equal(agent.trace[0].output.evidenceIsSample, true);
+    assert.match(paged.document.getElementById('ont-page').textContent, /전체 125건/);
+
   } finally {
     globalThis.setTimeout = originalTimeout;
     for (const w of windows) await w.happyDOM.close();
@@ -97,18 +132,19 @@ test('every chat call uses the shared bridge and forwards current source identit
   await sandbox.window._claraChatFetch('/api/chat', { body: JSON.stringify({ messages: [{ role: 'user', content: 'Question' }] }) });
   assert.equal(sent.ontologyContext, 'shared-context');
 });
-test('direct queries bypass AI and failed AI calls show consistent errors or evidence', async () => {
+test('every chat question enters the AI agent, including formerly hard-coded direct queries', async () => {
   let calls = 0;
   const sandbox = { Response, window: { ClaraOntology: {
-    query: async q => q === '지난주 온 메일 모두 알려줘' ? {kind:'list',text:'123건 원본 목록'} : null,
+    query: async () => { throw new Error('Chat must not bypass AI'); },
+    agent: async q => { calls++; return { kind: 'answer', text: q === '지난주 온 메일 모두 알려줘' ? 'AI가 조회한 123건 원본 목록' : 'AI 답변' }; },
     context: async () => 'shared-context',
     fallback: async q => q === '메일 요약해줘' ? {text:'AI 생성 실패 · 원본 근거'} : null
   } }, fetch: async () => { calls++; return Response.json({error:{message:'무료 AI 한도'}},{status:429}); } };
   vm.runInNewContext(await readFile(new URL('../public/ontology-bridge.js', import.meta.url), 'utf8'), sandbox);
   const ask = q => sandbox.window._claraChatFetch('/api/chat', {body:JSON.stringify({messages:[{role:'user',content:q}]})});
   assert.match((await (await ask('지난주 온 메일 모두 알려줘')).json()).content[0].text,/123건/);
-  assert.equal(calls,0);
-  assert.equal((await (await ask('메일 요약해줘')).json()).answerMode,'evidence');
-  await assert.rejects(ask('기타 질문'),/무료 AI 한도/);
-  assert.equal(calls,2);
+  assert.equal(calls,1);
+  assert.equal((await (await ask('메일 요약해줘')).json()).answerMode,'answer');
+  assert.match((await (await ask('기타 질문')).json()).content[0].text, /AI 답변/);
+  assert.equal(calls,3);
 });
