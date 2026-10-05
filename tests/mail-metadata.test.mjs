@@ -8,7 +8,7 @@ test('Gmail mapping and detail show each message recipients, sender and original
   const html = await readFile(new URL('../public/app.html', import.meta.url), 'utf8');
   const w = new Window();
   w.document.body.innerHTML = ['mp-from','mp-to','mp-cc','mp-cc-row','mp-date','mp-subj','mp-domain','to-me-btn','g-date'].map(id => `<div id="${id}"></div>`).join('');
-  const ctx = vm.createContext({ document: w.document });
+  const ctx = vm.createContext({ document: w.document, _gmailFolder:'inbox', _gmailFolderNames:{inbox:'받은편지함'} });
   for (const [name, next] of [['_gmailIcon','function _gmailShortDate'],['_gmailShortDate','let _gmailNextPageToken'],['_mapGmailEmail','async function _gmailFetchMessages'],['renderMailMetadata','function openEmail']]) {
     const start = html.indexOf('function ' + name + '(');
     const end = html.indexOf(next, start + 1);
