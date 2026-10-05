@@ -9,6 +9,13 @@ Resolve follow-up phrases from conversation and evidence already read. If the re
 const params = (properties, required = []) => ({ type: 'object', properties, required, additionalProperties: false });
 const string = { type: 'string' };
 const period = { type: 'string', description: 'Human date expression, e.g. yesterday, last week, recent 30 days, all, or YYYY-MM-DD to YYYY-MM-DD.' };
+export function redactSourceText(text, context = '') {
+  let safe = String(text || '').replace(/\b(?:sk-(?:or-v1-)?[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AIza[A-Za-z0-9_-]{25,})\b/g, '[인증 정보 숨김]');
+  const auth = /(?:로그인|회원가입|인증|일회용|login|log.in|sign.in|sign.up|signup|verif(?:y|ication)|one.time|OTP|security.code)/i;
+  if (auth.test(context)) safe = safe.replace(/\b\d{6,8}\b/g, '[인증값 숨김]');
+  else safe = safe.split('\n').map(line => auth.test(line) ? line.replace(/\b\d{6,8}\b/g, '[인증값 숨김]') : line).join('\n');
+  return safe;
+}
 export const ASSISTANT_TOOLS = [
   ['get_mail', 'Read mail bodies for a period and optional sender/recipient. No literal topic filter: analyze meaning yourself.', params({ period, scope: { enum: ['received', 'sent', 'all', 'inbox'] }, person: string })],
   ['get_calendar', 'Read calendar events and expanded recurring occurrences for a period.', params({ period })],
@@ -64,7 +71,7 @@ export async function runAssistant({ complete, execute, context, evidence, histo
       // Unverified markers are removed; they never prevent an otherwise useful
       // natural-language answer. Available sources are shown as retrieved data,
       // not falsely attributed as model-selected supporting citations.
-      let text = message.content.replace(/\[((?:mail|event):[^\]\n]+|ontology:query)\]/g, (marker, id) => sources.has(id) || id === 'ontology:query' && transcript.some(t => t.role === 'tool' && t.name === 'rank_correspondents' && !JSON.parse(t.content).error) ? marker : '');
+      let text = redactSourceText(message.content).replace(/\[((?:mail|event):[^\]\n]+|ontology:query)\]/g, (marker, id) => sources.has(id) || id === 'ontology:query' && transcript.some(t => t.role === 'tool' && t.name === 'rank_correspondents' && !JSON.parse(t.content).error) ? marker : '');
       if (sources.size && !/\[(mail|event):/.test(text)) text += '\n\n조회한 자료: ' + [...sources].slice(0, 6).map(id => '[' + id + ']').join(' ');
       return { kind: 'answer', text, trace: transcript };
     }
