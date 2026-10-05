@@ -12,9 +12,9 @@ async function route(path, { session = { user: { email: 'me@example.com' }, acce
   const js = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   const assistantSource = await readFile(new URL('../src/app/api/chat/assistant.ts', import.meta.url), 'utf8');
   const assistantExports = {};
-  vm.runInNewContext(ts.transpileModule(assistantSource, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, { exports: assistantExports, require(name) { if (name === 'next/server') return { NextResponse: { json: Response.json } }; if (name.endsWith('/ontology-assistant.mjs')) return { ASSISTANT_SYSTEM, ASSISTANT_TOOLS }; throw new Error(name); }, fetch: fetchStub, AbortSignal, process: { env: { OPENROUTER_API_KEY: 'test-key' } } });
+  vm.runInNewContext(ts.transpileModule(assistantSource, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, { exports: assistantExports, require(name) { if(name==='@/lib/gmail-transport')return {gmailFetch:(url)=>fetchStub(url),invalidateGmail(){}}; if (name === 'next/server') return { NextResponse: { json: Response.json } }; if (name.endsWith('/ontology-assistant.mjs')) return { ASSISTANT_SYSTEM, ASSISTANT_TOOLS }; throw new Error(name); }, fetch: fetchStub, AbortSignal, process: { env: { OPENROUTER_API_KEY: 'test-key' } } });
   const exports = {};
-  vm.runInNewContext(js, { exports, console: { warn() {} }, require(name) { if (name === './assistant') return assistantExports; if (name === '@/auth') return { auth: async () => session }; if (name === 'next/server') return { NextResponse: { json: Response.json } }; if (name.endsWith('/ontology-plan.mjs')) return { PLANNER_SYSTEM, validatePlan }; if (name.endsWith('/ontology-agent.mjs')) return { AGENT_SYSTEM, AGENT_REPAIR_SYSTEM, AGENT_RESPONSE_FORMAT, agentResponseFormat, agentTools, agentCompletionText, validateDecision }; throw new Error(name); }, fetch: fetchStub, URL, Buffer, AbortSignal, Request, Response, process: { env: { OPENROUTER_API_KEY: 'test-key' } } });
+  vm.runInNewContext(js, { exports, console: { warn() {} }, require(name) { if(name==='@/lib/gmail-transport')return {gmailFetch:(url)=>fetchStub(url),invalidateGmail(){}}; if (name === './assistant') return assistantExports; if (name === '@/auth') return { auth: async () => session }; if (name === 'next/server') return { NextResponse: { json: Response.json } }; if (name.endsWith('/ontology-plan.mjs')) return { PLANNER_SYSTEM, validatePlan }; if (name.endsWith('/ontology-agent.mjs')) return { AGENT_SYSTEM, AGENT_REPAIR_SYSTEM, AGENT_RESPONSE_FORMAT, agentResponseFormat, agentTools, agentCompletionText, validateDecision }; throw new Error(name); }, fetch: fetchStub, URL, Buffer, AbortSignal, Request, Response, process: { env: { OPENROUTER_API_KEY: 'test-key' } } });
   return exports;
 }
 test('new assistant API returns plain prose and native tools without forcing answer JSON', async () => {
@@ -290,4 +290,24 @@ test('planner rejects invalid model output, invalid timezones and unauthenticate
   const r = await route('chat');
   assert.equal((await r.POST(request('Invalid/Zone'))).status, 400);
   assert.equal((await (await route('chat', { session: null })).POST(request('Asia/Seoul'))).status, 401);
+});
+
+
+test('incremental Gmail sync reads only changed IDs, deduplicates changes and preserves history checkpoints', async () => {
+  const urls=[];
+  const r=await route('ontology/sync',{fetch:async url=>{
+    const u=new URL(url);urls.push(u);
+    if(u.pathname.endsWith('/history'))return Response.json({historyId:'200',history:[{messages:[{id:'new'},{id:'new'},{id:'deleted'}],messagesDeleted:[{message:{id:'deleted'}}]}]});
+    if(u.pathname.endsWith('/deleted'))return new Response('',{status:404});
+    return Response.json({id:'new',internalDate:'1791158400000',payload:{headers:[{name:'Subject',value:'Changed'}],mimeType:'text/plain',body:{data:Buffer.from('New body').toString('base64url')}}});
+  }});
+  const res=await r.GET(new Request('https://clara.test/api/ontology/sync?source=mail_changes&historyId=100'));
+  assert.equal(res.status,200);const data=await res.json();assert.equal(data.historyId,'200');assert.equal(data.records.length,1);assert.ok(data.deletedIds.includes('deleted'));
+  assert.equal(urls.filter(u=>u.pathname.endsWith('/new')).length,1);assert.ok(urls.every(u=>!u.pathname.endsWith('/messages')));
+});
+test('expired Gmail history asks for full sync; a large history entry resumes in bounded body batches',async()=>{
+  const r=await route('ontology/sync',{fetch:async url=>{const u=new URL(url);if(u.pathname.endsWith('/history')){if(u.searchParams.get('startHistoryId')==='1')return new Response('',{status:404});return Response.json({historyId:'300',history:[{messages:Array.from({length:25},(_,i)=>({id:'m'+i}))}]});}return Response.json({id:u.pathname.split('/').pop(),internalDate:'1791158400000',payload:{headers:[]}});}});
+  assert.equal((await(await r.GET(new Request('https://clara.test/api/ontology/sync?source=mail_changes&historyId=1'))).json()).reset,true);
+  let cursor=null,all=[];do{const data=await(await r.GET(new Request('https://clara.test/api/ontology/sync?source=mail_changes&historyId=100'+(cursor?'&cursor='+cursor:'')))).json();assert.ok(data.records.length<=10);all.push(...data.records);cursor=data.cursor;}while(cursor);
+  assert.equal(new Set(all.map(m=>m.id)).size,25);
 });

@@ -1349,6 +1349,14 @@ function _gmailShortDate(dateStr) {
   } catch (e) { return ''; }
 }
 
+const _gmailFolderCache = new Map();
+let _gmailCacheInvalidated = false;
+let _gmailFolderLoadedAt = 0;
+window.addEventListener('clara-source-changed', function(){ _gmailFolderCache.clear(); _gmailCacheInvalidated = true; });
+function _cacheGmailFolder() {
+  if (_gmailCacheInvalidated || !_gmailConnected || !EMAILS.length || _gmailFetching || _gmailLoadingMore) return;
+  _gmailFolderCache.set(_gmailFolder, { emails: EMAILS.slice(), cursor: _gmailNextPageToken, hasMore: _gmailHasMore, retry: _gmailRetryPage, time: _gmailFolderLoadedAt });
+}
 let _gmailNextPageToken = null;
 let _gmailLoadingMore = false;
 let _gmailHasMore = false;
@@ -1426,6 +1434,8 @@ function _mapGmailEmail(e) {
 }
 
 async function _gmailFetchMessages(folder) {
+  _cacheGmailFolder();
+  const cached = _gmailFolderCache.get(folder || _gmailFolder);
   const generation = ++_gmailFolderGeneration;
   _gmailFolder = folder || _gmailFolder;
   _gmailAbortController?.abort();
@@ -1440,6 +1450,15 @@ async function _gmailFetchMessages(folder) {
   await Promise.resolve();
   if (generation !== _gmailFolderGeneration) return;
   EMAILS.length = 0;
+  if (cached) {
+    EMAILS.push(...cached.emails);
+    _gmailFolderLoadedAt = cached.time;
+    _gmailNextPageToken = cached.cursor; _gmailHasMore = cached.hasMore; _gmailRetryPage = cached.retry;
+    renderList();
+    if (folder && Date.now() - cached.time < 60000 && !cached.retry) {
+      _gmailFetching = false; _setupEmailListInfiniteScroll(); _renderGmailPagingFooter(); return;
+    }
+  }
   renderList();
   try {
     showToast('Gmail 메일 로딩 중...');
@@ -1450,13 +1469,15 @@ async function _gmailFetchMessages(folder) {
     if (generation !== _gmailFolderGeneration) return;
     if (!res.ok) {
       if (data.error === 'quota_exceeded') {
-        showToast('⚠ Gmail 요청이 일시적으로 많아 잠시 제한됐습니다. 1분 후 자동으로 다시 시도합니다.');
+        if (!EMAILS.length) showToast('메일을 준비하고 있습니다. 자동으로 이어서 불러옵니다.');
         _gmailLastError = 'Gmail 요청 제한으로 잠시 후 자동 재시도합니다.';
-        setTimeout(function(){ if (generation === _gmailFolderGeneration) _gmailFetchMessages(); }, 60000);
+        setTimeout(function(){ if (generation === _gmailFolderGeneration) _gmailFetchMessages(); }, Math.max(60000, data.retryAfterMs || 60000));
         return;
       }
       throw new Error('status ' + res.status);
     }
+    _gmailCacheInvalidated = false;
+    _gmailFolderLoadedAt = Date.now();
     const list = data.emails || [];
     EMAILS.length = 0;
     _gmailConnected = true;
@@ -1505,7 +1526,7 @@ async function _gmailLoadMore(silent) {
     if (!res.ok) {
       const errData = await res.json().catch(() => ({}));
       _gmailLastError = errData.error === 'quota_exceeded' ? 'Gmail 요청 제한으로 잠시 후 자동 재시도합니다.' : '메일 로딩에 실패했습니다. 다시 시도해 주세요.';
-      _gmailScrollCooldownUntil = Date.now() + (errData.error === 'quota_exceeded' ? 60000 : 5000);
+      _gmailScrollCooldownUntil = Date.now() + (errData.error === 'quota_exceeded' ? Math.max(60000, errData.retryAfterMs || 60000) : 5000);
       _scheduleGmailRetry();
       return false;
     }

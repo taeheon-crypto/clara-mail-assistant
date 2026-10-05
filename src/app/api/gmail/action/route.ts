@@ -1,3 +1,4 @@
+import { invalidateGmail } from '@/lib/gmail-transport';
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 
@@ -85,5 +86,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "gmail_action_failed", detail: errText.slice(0, 300) }, { status: res.status });
   }
 
+  invalidateGmail(accessToken, gmailId);
   return NextResponse.json({ success: true });
 }
