@@ -48,3 +48,30 @@ test('failed reads are never cached and a write racing a read cannot repopulate 
   t.invalidateGmail('a', 'abc'); release(); await pending;
   await t.gmailFetch(url, 'a'); assert.equal(calls, 3);
 });
+
+
+test('metadata page uses one multipart request, maps out-of-order parts, and reuses cached rows',async()=>{
+  let calls=0;
+  const t=await transport(async(url,options)=>{
+    calls++;assert.equal(url,'https://gmail.googleapis.com/batch');assert.ok(!options.body.includes('format=full'));
+    return new Response('--reply\r\nContent-Type: application/http\r\nContent-ID: <response-mail1>\r\n\r\nHTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n'+JSON.stringify({id:'def',payload:{headers:[]}})+'\r\n--reply\r\nContent-Type: application/http\r\nContent-ID: <response-mail0>\r\n\r\nHTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n'+JSON.stringify({id:'abc',payload:{headers:[]}})+'\r\n--reply--\r\n',{headers:{'Content-Type':'multipart/mixed; boundary="reply"'}});
+  });
+  const rows=await t.gmailMetadataBatch(['abc','def'],'token');assert.equal((await rows[0].json()).id,'abc');assert.equal((await rows[1].json()).id,'def');
+  await t.gmailMetadataBatch(['abc','def'],'token');assert.equal(calls,1);
+});
+test('one throttled metadata part preserves successful rows and missing parts remain retryable',async()=>{
+  const t=await transport(async()=>new Response('--reply\r\nContent-Type: application/http\r\nContent-ID: <response-mail0>\r\n\r\nHTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n'+JSON.stringify({id:'abc',payload:{headers:[]}})+'\r\n--reply\r\nContent-Type: application/http\r\nContent-ID: <response-mail1>\r\n\r\nHTTP/1.1 429 Too Many Requests\r\nContent-Type: application/json\r\nRetry-After: 120\r\n\r\n{"error":"rateLimitExceeded"}\r\n--reply--\r\n',{headers:{'Content-Type':'multipart/mixed; boundary=reply'}}));
+  const rows=await t.gmailMetadataBatch(['abc','def','eee'],'token');assert.deepEqual(Array.from(rows,r=>r.status),[200,429,502]);
+  assert.equal((await t.gmailMetadataBatch(['abc'],'token'))[0].status,200);
+  assert.equal((await t.gmailFetch(url.replace('abc','fff'),'token')).status,429);
+});
+
+
+test('five parallel quota responses produce one cooldown instead of multiplying it to fifteen minutes',async()=>{
+  const releases=[];const t=await transport(()=>new Promise(resolve=>releases.push(resolve)));
+  const requests=Array.from({length:5},(_,i)=>t.gmailFetch(url.replace('abc','a'+i),'token'));
+  while(releases.length<5)await new Promise(resolve=>setTimeout(resolve,0));
+  releases.forEach(resolve=>resolve(Response.json({error:'rateLimitExceeded'},{status:429})));
+  const responses=await Promise.all(requests);
+  assert.ok(responses.every(r=>Number(r.headers.get('Retry-After'))<=61));
+});

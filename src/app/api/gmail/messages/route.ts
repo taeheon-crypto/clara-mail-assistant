@@ -1,4 +1,4 @@
-import { gmailFetch } from '@/lib/gmail-transport';
+import { gmailFetch, gmailMetadataBatch } from '@/lib/gmail-transport';
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 
@@ -144,6 +144,8 @@ export async function GET(req: Request) {
   const accessToken = (session as any).accessToken as string;
 
   const { searchParams } = new URL(req.url);
+  const messageId = searchParams.get('id');
+  if (messageId && !/^[a-f0-9]{1,32}$/i.test(messageId)) return NextResponse.json({ error: 'invalid_message' }, { status: 400 });
   const pageToken = searchParams.get("pageToken");
   const folder = searchParams.get("folder") || "inbox";
   const mailboxes: Record<string, { label?: string; query?: string; includeSpamTrash?: boolean }> = {
@@ -164,7 +166,7 @@ export async function GET(req: Request) {
   if (mailbox.includeSpamTrash) listUrl.searchParams.set("includeSpamTrash", "true");
   if (pageToken) listUrl.searchParams.set("pageToken", pageToken);
 
-  const listRes = await gmailFetch(listUrl, accessToken);
+  const listRes = messageId ? Response.json({ messages: [{ id: messageId }] }) : await gmailFetch(listUrl, accessToken);
   if (!listRes.ok) {
     const bodyText = await listRes.text().catch(() => "");
     console.error(`gmail list failed status=${listRes.status} body=${bodyText.slice(0, 400)}`);
@@ -210,7 +212,19 @@ export async function GET(req: Request) {
   const BATCH_SIZE = 5;
   const messages: any[] = [];
   const pendingIds = ids.filter(message => !loadedIds.has(message.id));
-  for (let i = 0; i < pendingIds.length; i += BATCH_SIZE) {
+  if (!messageId) {
+    const results = await gmailMetadataBatch(pendingIds.map(m => m.id), accessToken);
+    for (const response of results) {
+      if (response.ok) messages.push(await response.json());
+      else if (response.status !== 404) {
+        incompletePage = true;
+        const text = await response.text();
+        if (response.status === 429 || /quota|rateLimitExceeded/i.test(text)) {
+          quotaHit = true; retryAfterMs = Math.max(retryAfterMs, Number(response.headers.get('Retry-After') || 60) * 1000);
+        }
+      }
+    }
+  } else for (let i = 0; i < pendingIds.length; i += BATCH_SIZE) {
     const batch = pendingIds.slice(i, i + BATCH_SIZE);
     const results = await Promise.all(batch.map((m) => fetchOne(m.id)));
     messages.push(...results);
@@ -248,7 +262,8 @@ export async function GET(req: Request) {
       ccHeader,
       toHeader,
       subject,
-      preview: body.slice(0, 140),
+      preview: body.slice(0, 140) || msg.snippet || "",
+      bodyLoaded: !!messageId,
       body,
       bodyHtml,
       date,
