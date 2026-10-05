@@ -65,19 +65,32 @@ export async function POST(req: Request) {
   ];
   try {
     const deadline = Date.now() + 25000;
+    let nativeSchema = true;
     const requestHeaders = { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`, 'HTTP-Referer': process.env.APP_URL || 'http://localhost:3000', 'X-Title': 'Clara Mail Assistant' };
-    const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    let res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST', signal: AbortSignal.timeout(25000),
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`, 'HTTP-Referer': process.env.APP_URL || 'http://localhost:3000', 'X-Title': 'Clara Mail Assistant' },
       body: JSON.stringify({ models: agent ? ['openrouter/free', MODEL] : MODELS, max_tokens: Math.min(4096, Math.max(128, Number(body.max_tokens) || 1024)), ...(agent ? { response_format: responseFormat, provider: { require_parameters: true } } : {}), messages }),
     });
     let data = await res.json().catch(() => null);
+    // Free providers vary in native JSON Schema support. Keep local validation
+    // authoritative when a provider rejects the structured-output request.
+    const initialStatus = !res.ok ? res.status : Number(data?.error?.code) || 0;
+    if (agent && [400, 404, 422, 502, 503].includes(initialStatus) && deadline - Date.now() > 1500) {
+      nativeSchema = false;
+      messages.push({ role: 'system', content: 'Return one JSON object conforming to this schema. Only choose citations from its allowed IDs: ' + JSON.stringify(responseFormat.json_schema.schema) });
+      res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST', signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())), headers: requestHeaders,
+        body: JSON.stringify({ models: MODELS, max_tokens: 4096, response_format: { type: 'json_object' }, messages }),
+      });
+      data = await res.json().catch(() => null);
+    }
     // A free reasoning model may exhaust its output budget before a final answer.
     // Retry one empty completion using the free router within the same deadline.
     if (res.ok && !data?.error && !data?.choices?.[0]?.message?.content?.trim() && deadline - Date.now() > 1500) {
       const retry = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST', signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())), headers: requestHeaders,
-        body: JSON.stringify({ model: 'openrouter/free', max_tokens: Math.max(2048, Math.min(4096, Number(body.max_tokens) || 2048)), ...(agent ? { response_format: responseFormat, provider: { require_parameters: true } } : {}), messages }),
+        body: JSON.stringify({ model: 'openrouter/free', max_tokens: Math.max(2048, Math.min(4096, Number(body.max_tokens) || 2048)), ...(agent ? nativeSchema ? { response_format: responseFormat, provider: { require_parameters: true } } : { response_format: { type: 'json_object' } } : {}), messages }),
       });
       const retried = await retry.json().catch(() => null);
       if (retry.ok && typeof retried?.choices?.[0]?.message?.content === 'string' && retried.choices[0].message.content.trim()) data = retried;
@@ -94,7 +107,7 @@ export async function POST(req: Request) {
         : 'AI 응답을 가져오지 못했습니다. 잠시 후 다시 시도해 주세요.';
       // Never log provider text: it can contain request data or credentials.
       console.warn('clara_chat_provider_error', { status, daily });
-      return NextResponse.json({ error: { message, code: daily ? 'daily_limit' : status === 429 ? 'rate_limited' : 'provider_error' } }, { status: status >= 400 && status <= 599 ? status : 502, headers: { ...headers, ...(status === 429 ? { 'Retry-After': String(retryAfter) } : {}) } });
+      return NextResponse.json({ error: { message, code: daily ? 'daily_limit' : status === 429 ? 'rate_limited' : 'provider_error', providerStatus: status } }, { status: status >= 400 && status <= 599 ? status : 502, headers: { ...headers, ...(status === 429 ? { 'Retry-After': String(retryAfter) } : {}) } });
     }
     const text = data?.choices?.[0]?.message?.content;
     if (typeof text !== 'string' || !text.trim()) return NextResponse.json({ error: { message: 'AI가 빈 응답을 반환했습니다. 다시 시도해 주세요.' } }, { status: 502, headers });
@@ -121,7 +134,7 @@ export async function POST(req: Request) {
           if (deadline - Date.now() > 1500) {
             const repaired = await fetch('https://openrouter.ai/api/v1/chat/completions', {
               method: 'POST', signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())), headers: requestHeaders,
-              body: JSON.stringify({ models: ['openrouter/free', MODEL], max_tokens: 4096, response_format: responseFormat, provider: { require_parameters: true }, messages: [...messages, { role: 'assistant', content: text.slice(0, 20000) }, { role: 'system', content: AGENT_REPAIR_SYSTEM + '\nReturn {decision: ...} matching the supplied schema. Validation code: ' + checked.code + '\nIf fixing a citation error, revise the FINAL ANSWER rather than repeating a query merely to change format. Select exact supported IDs in the citations field: ' + JSON.stringify(allowedSources.slice(0, 180)) }] }),
+              body: JSON.stringify({ models: nativeSchema ? ['openrouter/free', MODEL] : MODELS, max_tokens: 4096, ...(nativeSchema ? { response_format: responseFormat, provider: { require_parameters: true } } : { response_format: { type: 'json_object' } }), messages: [...messages, { role: 'assistant', content: text.slice(0, 20000) }, { role: 'system', content: AGENT_REPAIR_SYSTEM + '\nReturn {decision: ...} matching the supplied schema. Validation code: ' + checked.code + '\nIf fixing a citation error, revise the FINAL ANSWER rather than repeating a query merely to change format. Select exact supported IDs in the citations field: ' + JSON.stringify(allowedSources.slice(0, 180)) }] }),
             });
             const repairedData = await repaired.json().catch(() => null);
             const candidate = repairedData?.choices?.[0]?.message?.content;

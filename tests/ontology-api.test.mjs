@@ -130,6 +130,20 @@ test('schema-wrapped responses and exact aggregate evidence are accepted without
   assert.equal((await r.POST(request([{ name: 'search_evidence', output: { nodes: [{ id: 'mail:real' }] } }]))).status, 502);
 });
 
+test('native schema rejection falls back to JSON while retaining evidence validation', async () => {
+  const sent = [];
+  const r = await route('chat', { fetch: async (_url, opts) => {
+    sent.push(JSON.parse(opts.body));
+    return sent.length === 1 ? Response.json({ error: { message: 'Unsupported schema PRIVATE' } }, { status: 400 }) : Response.json({ choices: [{ message: { content: JSON.stringify({ decision: { action: 'answer', text: 'Hello', citations: [] } }) } }] });
+  } });
+  const res = await r.POST(new Request('https://clara.test/api/chat', { method: 'POST', body: JSON.stringify({ mode: 'ontology_agent', remainingTools: 6, agentContext: { accountEmail: 'me@example.com', timeZone: 'Asia/Seoul' }, agentTrace: [], messages: [{ role: 'user', content: 'Hello' }] }) }));
+  assert.equal(res.status, 200);
+  assert.equal(sent.length, 2);
+  assert.equal(sent[1].response_format.type, 'json_object');
+  assert.match(sent[1].messages.at(-1).content, /clara|decision/);
+  assert.ok(!JSON.stringify(sent[1]).includes('PRIVATE'));
+});
+
 test('AI-selected structured citations are constrained to real tool evidence and rendered by Clara', async () => {
   let sent;
   const decision = { action: 'answer', text: 'Founder exchanged 12 emails.', citations: ['ontology:query'] };
