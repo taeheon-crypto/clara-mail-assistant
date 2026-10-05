@@ -81,16 +81,24 @@ const diagnosePlan = plan => {
 };
 export function validateDecision(value) {
   const fail = (code = 'decision_schema_mismatch') => ({ error: 'AI 에이전트의 도구 요청을 검증하지 못했습니다.', code });
-  if (!plain(value)) return fail();
+  if (!plain(value)) return fail('decision_object_required');
+  value = { ...value };
+  // Some providers emit unused union fields as null. Only remove known wire
+  // fields with no value; never discard populated fields or unknown actions.
+  for (const key of ['name', 'arguments', 'text', 'citations']) if (value[key] === null) delete value[key];
   if (['answer', 'clarify'].includes(value.action)) {
     const allowed = value.action === 'answer' ? ['action', 'text', 'citations'] : ['action', 'text'];
     if (value.citations !== undefined && (!Array.isArray(value.citations) || value.citations.length > 12 || value.citations.some(id => typeof id !== 'string' || id.length > 500 || !/^(?:mail:|event:|ontology:query$)/.test(id)))) return fail('citation_schema_mismatch');
-    return Object.keys(value).every(k => allowed.includes(k)) && typeof value.text === 'string' && value.text.trim() && value.text.length <= 20000 ? { decision: value } : fail();
+    if (Object.keys(value).some(k => !allowed.includes(k))) return fail('answer_extra_fields');
+    if (typeof value.text !== 'string' || !value.text.trim() || value.text.length > 20000) return fail('answer_text_required');
+    return { decision: value };
   }
-  if (value.action !== 'tool' || Object.keys(value).some(k => !['action', 'name', 'arguments'].includes(k)) || !plain(value.arguments)) return fail();
+  if (value.action !== 'tool') return fail('decision_action_unknown');
+  if (Object.keys(value).some(k => !['action', 'name', 'arguments'].includes(k))) return fail('tool_extra_fields');
+  if (!plain(value.arguments)) return fail('tool_arguments_required');
   const args = value.arguments;
   if (value.name === 'query_ontology') {
-    if (Object.hasOwn(args, 'plan') && Object.keys(args).some(k => k !== 'plan')) return fail();
+    if (Object.hasOwn(args, 'plan') && Object.keys(args).some(k => k !== 'plan')) return fail('query_extra_arguments');
     // Models sometimes put the plan directly in arguments rather than {plan}.
     const plan = normalizeAgentPlan(Object.hasOwn(args, 'plan') ? args.plan : args);
     const checked = validatePlan(plan);
@@ -103,7 +111,7 @@ export function validateDecision(value) {
     return { decision: { ...value, arguments: { question: args.question, ...(checked ? { plan: checked.plan } : {}) } } };
   }
   if (value.name === 'read_sources' && Object.keys(args).every(k => k === 'ids') && Array.isArray(args.ids) && args.ids.length > 0 && args.ids.length <= 6 && args.ids.every(id => typeof id === 'string' && id.length <= 500 && /^(mail|event):/.test(id))) return { decision: value };
-  return fail();
+  return fail('tool_name_or_arguments_invalid');
 }
 
 // Every chat enters this AI-led loop. Executors only run validated data, never code.
