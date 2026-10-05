@@ -161,8 +161,14 @@ async function run() {
             mail.cursor = data.cursor;
             if (!mail.cursor) {
               if (mail.refreshing) for (const id of Object.keys(state.emails)) if (!mail.seenIds.includes(id)) delete state.emails[id];
-              delete mail.refreshing; delete mail.seenIds; delete mail.incremental;
-              mail.status = 'complete'; mail.finishedAt = new Date().toISOString();
+              delete mail.refreshing; delete mail.seenIds;
+              if (!mail.incremental && mail.historyId) {
+                // Catch arrivals and label edits that occurred during the full scan.
+                mail.incremental = true; mail.status = 'syncing';
+              } else {
+                delete mail.incremental;
+                mail.status = 'complete'; mail.finishedAt = new Date().toISOString();
+              }
             }
           }
           preferMail = active === cal;
