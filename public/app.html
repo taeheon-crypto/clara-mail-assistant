@@ -340,8 +340,8 @@ body{display:flex;flex-direction:row;align-items:center;justify-content:center;
 .meta-popup.show{display:block}
 .meta-popup{max-width:min(520px,calc(100vw - 24px));min-width:min(340px,calc(100vw - 24px));box-sizing:border-box;max-height:70vh;overflow:auto}
 .meta-popup-row[hidden]{display:none}
-.meta-popup-row{display:grid;grid-template-columns:80px 1fr;gap:6px;padding:3px 0;font-size:13px;line-height:1.5}
-.meta-popup-label{color:var(--fg-s);text-align:right;font-weight:500}
+.meta-popup-row{display:grid;grid-template-columns:104px minmax(0,1fr);gap:10px;padding:3px 0;font-size:13px;line-height:1.5;align-items:start}
+.meta-popup-label{color:var(--fg-s);text-align:right;font-weight:500;white-space:normal;word-break:keep-all;overflow-wrap:anywhere}
 .meta-popup-val{color:var(--fg);font-weight:500;white-space:normal;overflow-wrap:anywhere}
 .meta-popup-val b{font-weight:700}
 .gmail-meta-right{display:flex;align-items:center;gap:2px;flex-shrink:0}
