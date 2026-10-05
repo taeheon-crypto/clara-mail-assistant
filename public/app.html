@@ -315,6 +315,10 @@ body{display:flex;flex-direction:row;align-items:center;justify-content:center;
 .ed.ai-workspace:not(.ai-mail-open) #ed-view::after{content:'관련 메일을 선택하면 원문이 여기에 표시됩니다';margin:auto;padding:24px;color:var(--fg-s);font-size:13px;text-align:center}
 .ai-workspace #ba-source-panel{width:280px!important;min-width:200px!important;flex:0 0 44%}
 .ai-workspace #ba-source-list table{min-width:0!important;table-layout:auto!important}
+.ai-workspace #ba-source-list colgroup{display:none}
+.ai-workspace #ba-source-list th:first-child,.ai-workspace #ba-source-list td:first-child{display:none}
+.ai-workspace #ba-source-list td:nth-child(2){width:auto}
+.ai-workspace #ba-source-list .ba-att-link{word-break:normal!important;overflow-wrap:anywhere}
 .ai-workspace #ba-source-list th:nth-child(n+4),.ai-workspace #ba-source-list td:nth-child(n+4),.ai-workspace #ba-source-list col:nth-child(n+4){display:none}
 .ai-workspace #ba-source-list col:nth-child(2){width:auto!important}
 .ai-workspace #ba-source-list tr[data-mail-id].selected{background:#f1ebff;box-shadow:inset 3px 0 var(--primary)}
