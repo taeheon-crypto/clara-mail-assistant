@@ -284,7 +284,7 @@ window.ClaraOntology = {
         const res = await fetch('/api/chat', { method: 'POST', credentials: 'same-origin', signal: AbortSignal.timeout(30000), headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'ontology_agent', agentContext: context, agentTrace: trace, remainingTools, messages: history, max_tokens: 4096 }) });
         const data = await res.json(); current();
         if (!res.ok) {
-          console.warn('clara_agent_response_error ' + JSON.stringify({ code: data.error?.code, validationCode: data.error?.validationCode }));
+          console.warn('clara_agent_response_error ' + JSON.stringify({ code: data.error?.code, validationCode: data.error?.validationCode, providerStatus: data.error?.providerStatus }));
           throw new Error(data.error?.message || 'Clara AI 연결에 실패했습니다.');
         }
         return data.decision;
