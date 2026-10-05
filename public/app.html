@@ -1329,6 +1329,7 @@ body{display:flex;flex-direction:row;align-items:center;justify-content:center;
 
 
 
+<script src="/gmail-request-budget.js"></script>
 <script>
 // ─── GMAIL INTEGRATION — 백엔드(Next.js API route) 경유, refresh_token은 서버에만 저장 ───
 let _gmailConnected = false;
@@ -1350,6 +1351,7 @@ function _gmailShortDate(dateStr) {
 }
 
 const _gmailFolderCache = new Map();
+function _gmailReadFetch(url, options) { return window.ClaraGmailRead ? window.ClaraGmailRead(url, options) : fetch(url, options); }
 let _gmailCacheInvalidated = false;
 let _gmailFolderLoadedAt = 0;
 window.addEventListener('clara-source-changed', function(){ _gmailFolderCache.clear(); _gmailCacheInvalidated = true; });
@@ -1462,7 +1464,7 @@ async function _gmailFetchMessages(folder) {
   renderList();
   try {
     showToast('Gmail 메일 로딩 중...');
-    const res = await fetch('/api/gmail/messages?folder=' + encodeURIComponent(_gmailFolder), { credentials: 'same-origin', signal: _gmailAbortController.signal });
+    const res = await _gmailReadFetch('/api/gmail/messages?folder=' + encodeURIComponent(_gmailFolder), { credentials: 'same-origin', signal: _gmailAbortController.signal });
     if (generation !== _gmailFolderGeneration) return;
     if (res.status === 401) { _gmailConnect(); return; }
     const data = await res.json().catch(() => ({}));
@@ -1521,7 +1523,7 @@ async function _gmailLoadMore(silent) {
     params.set('folder', _gmailFolder);
     if (_gmailNextPageToken) params.set('pageToken', _gmailNextPageToken);
     if (_gmailRetryPage) params.set('loadedIds', EMAILS.slice(-30).map(e => e.gmailId).filter(Boolean).join(','));
-    const res = await fetch('/api/gmail/messages?' + params, { credentials: 'same-origin', signal: _gmailAbortController?.signal });
+    const res = await _gmailReadFetch('/api/gmail/messages?' + params, { credentials: 'same-origin', signal: _gmailAbortController?.signal });
     if (generation !== _gmailFolderGeneration) return false;
     if (!res.ok) {
       const errData = await res.json().catch(() => ({}));
