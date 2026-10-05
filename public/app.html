@@ -1353,6 +1353,53 @@ function _gmailShortDate(dateStr) {
 
 let _gmailNextPageToken = null;
 let _gmailLoadingMore = false;
+let _gmailHasMore = false;
+let _gmailRetryPage = false;
+let _gmailRetryTimer = null;
+let _gmailLastError = '';
+
+function _acceptGmailPage(data) {
+  _gmailNextPageToken = data.nextPageToken || null;
+  _gmailRetryPage = !!data.retryPage;
+  _gmailHasMore = _gmailRetryPage || !!_gmailNextPageToken;
+  const existingIds = new Set(EMAILS.map(e => e.id));
+  (data.emails || []).map(_mapGmailEmail).forEach(e => {
+    if (!existingIds.has(e.id)) { EMAILS.push(e); existingIds.add(e.id); }
+  });
+  _gmailLastError = _gmailRetryPage ? '일부 메일을 불러오지 못해 자동으로 다시 시도합니다.' : '';
+  _gmailScrollCooldownUntil = _gmailRetryPage ? Date.now() + (data.retryAfterMs || 5000) : 0;
+  if (_gmailRetryPage) _scheduleGmailRetry();
+  else if (_gmailRetryTimer) { clearTimeout(_gmailRetryTimer); _gmailRetryTimer = null; }
+}
+
+function _scheduleGmailRetry() {
+  if (_gmailRetryTimer) clearTimeout(_gmailRetryTimer);
+  _gmailRetryTimer = setTimeout(function() {
+    _gmailRetryTimer = null;
+    if (_gmailHasMore) _gmailLoadMore(true);
+  }, Math.max(0, _gmailScrollCooldownUntil - Date.now()) + 100);
+}
+
+function _renderGmailPagingFooter() {
+  const scrollEl = document.getElementById('el-scroll');
+  if (!scrollEl || !_gmailConnected) return;
+  document.getElementById('el-load-more-row')?.remove();
+  const row = document.createElement('div');
+  row.id = 'el-load-more-row';
+  row.style.cssText = 'padding:14px;text-align:center;color:var(--fg-s);font-size:12px';
+  const status = document.createElement('div');
+  status.setAttribute('role', 'status');
+  status.textContent = EMAILS.length + '개 메일 · ' + (_gmailLoadingMore ? '이전 메일 불러오는 중...' : _gmailLastError || (_gmailHasMore ? '아래로 스크롤하면 더 불러옵니다.' : '모든 메일을 불러왔습니다.'));
+  row.appendChild(status);
+  if (_gmailHasMore && !_gmailLoadingMore) {
+    const button = document.createElement('button');
+    button.textContent = '이전 메일 더 보기';
+    button.style.cssText = 'margin-top:8px;padding:7px 14px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--primary);cursor:pointer;font-family:inherit';
+    button.onclick = function() { _gmailLoadMore(); };
+    row.appendChild(button);
+  }
+  scrollEl.appendChild(row);
+}
 
 function _mapGmailEmail(e) {
   return {
@@ -1389,23 +1436,16 @@ async function _gmailFetchMessages() {
       throw new Error('status ' + res.status);
     }
     const list = data.emails || [];
-    _gmailNextPageToken = data.nextPageToken || null;
-    if (!list.length) { showToast('받은편지함이 비어있습니다.'); _gmailConnected = true; _updateGmailBtn(); return; }
-
-    const newEmails = list.map(_mapGmailEmail);
     EMAILS.length = 0;
-    newEmails.forEach(e => EMAILS.push(e));
+    _gmailConnected = true;
+    _acceptGmailPage(data);
     renderList();
     _setupEmailListInfiniteScroll();
     selId = null;
     _gmailConnected = true;
     _updateGmailBtn();
-    showToast('✓ Gmail 연동 완료 — ' + newEmails.length + '개 메일');
-    if (data.quotaExceeded) {
-      showToast('⚠ Gmail 요청 한도로 일부 메일만 불러왔습니다. 스크롤하면 나중에 이어서 불러옵니다.');
-    } else {
-      setTimeout(_gmailPrefetchAll, 2000); // 초기 로드 직후 바로 또 몰아치지 않도록 약간의 텀을 둠
-    }
+    showToast(list.length ? '✓ Gmail 연동 완료 — ' + EMAILS.length + '개 메일' : _gmailRetryPage ? '메일을 다시 불러오는 중입니다.' : '받은편지함이 비어있습니다.');
+    if (!_gmailRetryPage && EMAILS.length < 30) _gmailPrefetchAll();
   } catch (err) {
     console.error('Gmail fetch error:', err);
     showToast('Gmail 로드 실패: ' + err.message);
@@ -1413,9 +1453,9 @@ async function _gmailFetchMessages() {
 }
 
 // 사용자가 스크롤로 체감하기 전에 조용히 미리 받아두는 백그라운드 프리페치 (적당한 선까지만 — 수천 통을 다 끌어오진 않음)
-const _GMAIL_PRELOAD_CAP = 40; // Gmail API 분당 할당량 보호를 위해 과도한 선제 로딩을 줄임
+const _GMAIL_PRELOAD_CAP = 30;
 async function _gmailPrefetchAll() {
-  while (_gmailNextPageToken && EMAILS.length < _GMAIL_PRELOAD_CAP) {
+  while (_gmailHasMore && EMAILS.length < _GMAIL_PRELOAD_CAP && Date.now() >= _gmailScrollCooldownUntil) {
     const ok = await _gmailLoadMore(true /* silent */);
     if (!ok) break; // 실패하면 무한 재시도 방지 위해 중단 (스크롤 시 다시 시도됨)
   }
@@ -1423,41 +1463,37 @@ async function _gmailPrefetchAll() {
 
 // 이전(더 오래된) 메일을 이어서 불러옴 — silent=true면 로딩 표시 없이 조용히(프리페치용)
 async function _gmailLoadMore(silent) {
-  if (_gmailLoadingMore || !_gmailNextPageToken) return;
+  if (_gmailLoadingMore || !_gmailHasMore) return false;
+  if (Date.now() < _gmailScrollCooldownUntil) { _scheduleGmailRetry(); return false; }
   _gmailLoadingMore = true;
   const scrollEl = document.getElementById('el-scroll');
-  let loadingRow = null;
-  if (!silent) {
-    loadingRow = document.createElement('div');
-    loadingRow.id = 'el-load-more-row';
-    loadingRow.style.cssText = 'padding:14px;text-align:center;color:#9ca3af;font-size:12px';
-    loadingRow.textContent = '이전 메일 불러오는 중...';
-    if (scrollEl) scrollEl.appendChild(loadingRow);
-  }
+  _renderGmailPagingFooter();
   try {
-    const res = await fetch('/api/gmail/messages?pageToken=' + encodeURIComponent(_gmailNextPageToken), { credentials: 'same-origin' });
+    const params = new URLSearchParams();
+    if (_gmailNextPageToken) params.set('pageToken', _gmailNextPageToken);
+    if (_gmailRetryPage) params.set('loadedIds', EMAILS.slice(-30).map(e => e.gmailId).filter(Boolean).join(','));
+    const res = await fetch('/api/gmail/messages?' + params, { credentials: 'same-origin' });
     if (!res.ok) {
       const errData = await res.json().catch(() => ({}));
-      if (errData.error === 'quota_exceeded') {
-        showToast('⚠ Gmail 요청 한도에 도달했습니다. 잠시 후 다시 스크롤해주세요.');
-        _gmailScrollCooldownUntil = Date.now() + 30000; // 할당량 초과 시 30초간 추가 요청 안 함
-      }
+      _gmailLastError = errData.error === 'quota_exceeded' ? 'Gmail 요청 제한으로 잠시 후 자동 재시도합니다.' : '메일 로딩에 실패했습니다. 다시 시도해 주세요.';
+      _gmailScrollCooldownUntil = Date.now() + (errData.error === 'quota_exceeded' ? 60000 : 5000);
+      _scheduleGmailRetry();
       return false;
     }
     const data = await res.json();
-    const list = data.emails || [];
-    _gmailNextPageToken = data.nextPageToken || null;
-    const existingIds = new Set(EMAILS.map(e => e.id));
-    list.map(_mapGmailEmail).forEach(e => { if (!existingIds.has(e.id)) EMAILS.push(e); });
+    const savedScrollTop = scrollEl?.scrollTop || 0;
+    _acceptGmailPage(data);
     renderList();
+    if (scrollEl) scrollEl.scrollTop = savedScrollTop;
     return true;
   } catch (err) {
     console.error('Gmail load-more error:', err);
+    _gmailLastError = '연결이 끊겼습니다. 다시 시도해 주세요.';
     return false;
   } finally {
     _gmailLoadingMore = false;
-    const stuckRow = document.getElementById('el-load-more-row');
-    if (stuckRow) stuckRow.remove();
+    _renderGmailPagingFooter();
+    if (!_gmailRetryPage && _gmailHasMore && EMAILS.length < 30) setTimeout(_gmailPrefetchAll, 0);
   }
 }
 
@@ -1467,9 +1503,7 @@ function _setupEmailListInfiniteScroll() {
   if (!scrollEl || scrollEl.dataset.infiniteBound) return;
   scrollEl.dataset.infiniteBound = '1';
   scrollEl.addEventListener('scroll', function() {
-    if (Date.now() < _gmailScrollCooldownUntil) return; // 연속 호출로 인한 깜빡임 방지
     if (scrollEl.scrollTop + scrollEl.clientHeight > scrollEl.scrollHeight - 300) {
-      _gmailScrollCooldownUntil = Date.now() + 500;
       _gmailLoadMore();
     }
   });
@@ -3237,6 +3271,7 @@ function renderList() {
         <div style="font-size:13px">${msg}</div>
         ${hasFilter ? '<button onclick="clearFilters();renderList()" style="font-size:12px;color:var(--primary);background:none;border:none;cursor:pointer;text-decoration:underline">필터 초기화</button>' : ''}
       </div>`;
+    _renderGmailPagingFooter();
     return;
   }
 
@@ -3272,6 +3307,7 @@ function renderList() {
       </div>
     </div>`;
   }).join('');
+  _renderGmailPagingFooter();
 }
 
 // 실제 HTML 이메일은 sandboxed iframe에 렌더링 (Gmail과 동일한 방식 — 메일 CSS가 앱에 새지 않도록 격리)

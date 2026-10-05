@@ -146,7 +146,7 @@ export async function GET(req: Request) {
   const pageToken = searchParams.get("pageToken");
 
   const listUrl = new URL("https://gmail.googleapis.com/gmail/v1/users/me/messages");
-  listUrl.searchParams.set("maxResults", "15");
+  listUrl.searchParams.set("maxResults", "30");
   listUrl.searchParams.set("labelIds", "INBOX");
   if (pageToken) listUrl.searchParams.set("pageToken", pageToken);
 
@@ -156,7 +156,7 @@ export async function GET(req: Request) {
   if (!listRes.ok) {
     const bodyText = await listRes.text().catch(() => "");
     console.error(`gmail list failed status=${listRes.status} body=${bodyText.slice(0, 400)}`);
-    const quotaExceeded = bodyText.includes("Quota exceeded") || bodyText.includes("rateLimitExceeded");
+    const quotaExceeded = listRes.status === 429 || /quota|rateLimitExceeded|dailyLimitExceeded/i.test(bodyText);
     return NextResponse.json(
       { error: quotaExceeded ? "quota_exceeded" : "gmail_list_failed", detail: bodyText.slice(0, 300) },
       { status: listRes.status }
@@ -167,6 +167,9 @@ export async function GET(req: Request) {
   const nextPageToken: string | null = listData.nextPageToken || null;
 
   let quotaHit = false;
+  let incompletePage = false;
+  // A resumed page only needs the messages not already held by this browser.
+  const loadedIds = new Set((searchParams.get("loadedIds") || "").split(",").filter(id => /^[a-f0-9]{1,32}$/i.test(id)).slice(0, 30));
   // 한꺼번에 너무 많이 병렬 요청하면 Gmail API 레이트리밋에 걸려 일부 메일이 누락됨 → 작은 배치 + 재시도로 보완.
   // 단, "분당 할당량 초과"는 몇 초 재시도한다고 풀리지 않으므로 그 경우엔 즉시 포기한다 (더 두드리면 역효과).
   async function fetchOne(id: string, attempt = 0): Promise<any | null> {
@@ -177,8 +180,9 @@ export async function GET(req: Request) {
     );
     if (r.ok) return r.json();
     const bodyText = await r.text().catch(() => "");
-    if (bodyText.includes("Quota exceeded") || bodyText.includes("rateLimitExceeded")) {
+    if (r.status === 429 || /quota|rateLimitExceeded|dailyLimitExceeded/i.test(bodyText)) {
       quotaHit = true;
+      incompletePage = true;
       console.error(`gmail quota exceeded, aborting remaining fetches`);
       return null;
     }
@@ -187,17 +191,20 @@ export async function GET(req: Request) {
       await new Promise((res) => setTimeout(res, 300 * Math.pow(2, attempt)));
       return fetchOne(id, attempt + 1);
     }
-    console.error(`gmail message fetch failed permanently: ${id} status=${r.status} body=${bodyText.slice(0, 400)}`);
+    if (r.status !== 404) incompletePage = true;
+    console.error(`gmail message fetch failed permanently: ${id} status=${r.status}`);
     return null; // 재시도해도 실패하면 이 메일은 건너뜀 (깨진 행 대신 그냥 제외)
   }
 
   const BATCH_SIZE = 5;
   const messages: any[] = [];
-  for (let i = 0; i < ids.length; i += BATCH_SIZE) {
-    const batch = ids.slice(i, i + BATCH_SIZE);
+  const pendingIds = ids.filter(message => !loadedIds.has(message.id));
+  for (let i = 0; i < pendingIds.length; i += BATCH_SIZE) {
+    const batch = pendingIds.slice(i, i + BATCH_SIZE);
     const results = await Promise.all(batch.map((m) => fetchOne(m.id)));
     messages.push(...results);
-    if (i + BATCH_SIZE < ids.length) await new Promise((res) => setTimeout(res, 120));
+    if (quotaHit) break;
+    if (i + BATCH_SIZE < pendingIds.length) await new Promise((res) => setTimeout(res, 120));
   }
 
   const emails = messages.filter((msg) => msg && msg.payload).map((msg) => {
@@ -240,5 +247,5 @@ export async function GET(req: Request) {
     };
   });
 
-  return NextResponse.json({ emails, nextPageToken: quotaHit ? null : nextPageToken, quotaExceeded: quotaHit });
+  return NextResponse.json({ emails, nextPageToken: incompletePage ? pageToken : nextPageToken, retryPage: incompletePage, quotaExceeded: quotaHit, retryAfterMs: quotaHit ? 60000 : incompletePage ? 5000 : 0 });
 }
