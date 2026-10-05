@@ -49,7 +49,10 @@ async function save() {
   } catch { persistence = false;  }
 }
 async function page(params, signal) {
-  const res = await fetch('/api/ontology/sync?' + new URLSearchParams(params), { credentials: 'same-origin', signal });
+  const url = '/api/ontology/sync?' + new URLSearchParams(params);
+  const options = { credentials: 'same-origin', signal };
+  const gmail = ['mail', 'mail_changes', 'mail_checkpoint'].includes(params.source);
+  const res = gmail && window.ClaraGmailRead ? await window.ClaraGmailRead(url, options, params.source === 'mail_checkpoint' ? 1 : 220, true) : await fetch(url, options);
   const data = await res.json().catch(() => ({}));
   if (!res.ok) { const error = new Error(data.error || '동기화 오류'); error.status = res.status; error.retryAfter = Number(data.retryAfter || 60); throw error; }
   return data;
@@ -255,7 +258,9 @@ window.ClaraOntology = {
           if (n.type !== 'Email' || !n.properties.textIsExcerpt) { expanded.push(n); continue; }
           let offset = 0;
           do {
-            const res = await fetch('/api/ontology/sync?' + new URLSearchParams({ source: 'mail_body', id: n.id.slice(5), offset: String(offset) }), { credentials: 'same-origin', signal: AbortSignal.timeout(30000) });
+            const bodyUrl = '/api/ontology/sync?' + new URLSearchParams({ source: 'mail_body', id: n.id.slice(5), offset: String(offset) });
+            const bodyOptions = { credentials: 'same-origin', signal: AbortSignal.timeout(30000) };
+            const res = window.ClaraGmailRead ? await window.ClaraGmailRead(bodyUrl, bodyOptions, 40) : await fetch(bodyUrl, bodyOptions);
             const body = await res.json(); current();
             if (!res.ok || body.id !== n.id || typeof body.text !== 'string') throw new Error('긴 메일의 원문 읽기를 완료하지 못했습니다.');
             expanded.push({ ...n, properties: { ...n.properties, text: redactSourceText(body.text, n.label), textIsExcerpt: false, originalBodyPartOffset: offset, originalTotalChars: body.totalChars } });
