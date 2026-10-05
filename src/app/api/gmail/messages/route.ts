@@ -144,10 +144,23 @@ export async function GET(req: Request) {
 
   const { searchParams } = new URL(req.url);
   const pageToken = searchParams.get("pageToken");
+  const folder = searchParams.get("folder") || "inbox";
+  const mailboxes: Record<string, { label?: string; query?: string; includeSpamTrash?: boolean }> = {
+    inbox: { label: "INBOX" }, starred: { label: "STARRED" }, snoozed: { query: "in:snoozed" },
+    important: { label: "IMPORTANT" }, sent: { label: "SENT" }, drafts: { label: "DRAFT" },
+    purchases: { query: "category:purchases" }, social: { query: "category:social" },
+    updates: { query: "category:updates" }, forums: { query: "category:forums" }, promotions: { query: "category:promotions" },
+    all: {}, spam: { label: "SPAM", includeSpamTrash: true }, deleted: { label: "TRASH", includeSpamTrash: true },
+    primary: { label: "INBOX", query: "category:primary" },
+  };
+  if (!Object.hasOwn(mailboxes, folder)) return NextResponse.json({ error: "invalid_mailbox" }, { status: 400 });
+  const mailbox = mailboxes[folder];
 
   const listUrl = new URL("https://gmail.googleapis.com/gmail/v1/users/me/messages");
   listUrl.searchParams.set("maxResults", "30");
-  listUrl.searchParams.set("labelIds", "INBOX");
+  if (mailbox.label) listUrl.searchParams.set("labelIds", mailbox.label);
+  if (mailbox.query) listUrl.searchParams.set("q", mailbox.query);
+  if (mailbox.includeSpamTrash) listUrl.searchParams.set("includeSpamTrash", "true");
   if (pageToken) listUrl.searchParams.set("pageToken", pageToken);
 
   const listRes = await fetch(listUrl.toString(), {
@@ -244,8 +257,10 @@ export async function GET(req: Request) {
       unread,
       starred,
       attachments,
+      labelIds: msg.labelIds || [],
+      mailbox: folder,
     };
   });
 
-  return NextResponse.json({ emails, nextPageToken: incompletePage ? pageToken : nextPageToken, retryPage: incompletePage, quotaExceeded: quotaHit, retryAfterMs: quotaHit ? 60000 : incompletePage ? 5000 : 0 });
+  return NextResponse.json({ emails, mailbox: folder, nextPageToken: incompletePage ? pageToken : nextPageToken, retryPage: incompletePage, quotaExceeded: quotaHit, retryAfterMs: quotaHit ? 60000 : incompletePage ? 5000 : 0 });
 }
