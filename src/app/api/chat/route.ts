@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@/auth';
+import { assistantResponse } from './assistant';
 import { PLANNER_SYSTEM, validatePlan } from '../../../../public/ontology-plan.mjs';
 import { AGENT_SYSTEM, AGENT_REPAIR_SYSTEM, agentResponseFormat, agentTools, agentCompletionText, validateDecision } from '../../../../public/ontology-agent.mjs';
 
@@ -31,6 +32,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: { message: '대화 메시지 형식이 잘못되었습니다.' } }, { status: 400, headers });
   }
   if (!process.env.OPENROUTER_API_KEY) return NextResponse.json({ error: { message: 'AI 연결 설정이 필요합니다.' } }, { status: 503, headers });
+  if (['ontology_assistant', 'ontology_digest'].includes(body.mode)) return assistantResponse(body, session.user?.email || '');
   const planning = body.mode === 'ontology_plan';
   const agent = body.mode === 'ontology_agent';
   if (agent && (!Array.isArray(body.agentTrace) || body.agentTrace.length > 6 || JSON.stringify(body.agentTrace).length > 100000 || !Number.isInteger(body.remainingTools) || body.remainingTools < 0 || body.remainingTools > 6)) return NextResponse.json({ error: { message: '에이전트 도구 기록 형식이 잘못되었습니다.' } }, { status: 400, headers });

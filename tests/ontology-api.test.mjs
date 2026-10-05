@@ -3,16 +3,31 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import ts from 'typescript';
+import { ASSISTANT_SYSTEM, ASSISTANT_TOOLS } from '../public/ontology-assistant.mjs';
 import { PLANNER_SYSTEM, validatePlan } from '../public/ontology-plan.mjs';
 import { AGENT_SYSTEM, AGENT_REPAIR_SYSTEM, AGENT_RESPONSE_FORMAT, agentResponseFormat, agentTools, agentCompletionText, validateDecision } from '../public/ontology-agent.mjs';
 
 async function route(path, { session = { user: { email: 'me@example.com' }, accessToken: 'test-token' }, fetch: fetchStub = () => { throw new Error('Unexpected network call'); } } = {}) {
   const source = await readFile(new URL('../src/app/api/' + path + '/route.ts', import.meta.url), 'utf8');
   const js = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+  const assistantSource = await readFile(new URL('../src/app/api/chat/assistant.ts', import.meta.url), 'utf8');
+  const assistantExports = {};
+  vm.runInNewContext(ts.transpileModule(assistantSource, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, { exports: assistantExports, require(name) { if (name === 'next/server') return { NextResponse: { json: Response.json } }; if (name.endsWith('/ontology-assistant.mjs')) return { ASSISTANT_SYSTEM, ASSISTANT_TOOLS }; throw new Error(name); }, fetch: fetchStub, AbortSignal, process: { env: { OPENROUTER_API_KEY: 'test-key' } } });
   const exports = {};
-  vm.runInNewContext(js, { exports, console: { warn() {} }, require(name) { if (name === '@/auth') return { auth: async () => session }; if (name === 'next/server') return { NextResponse: { json: Response.json } }; if (name.endsWith('/ontology-plan.mjs')) return { PLANNER_SYSTEM, validatePlan }; if (name.endsWith('/ontology-agent.mjs')) return { AGENT_SYSTEM, AGENT_REPAIR_SYSTEM, AGENT_RESPONSE_FORMAT, agentResponseFormat, agentTools, agentCompletionText, validateDecision }; throw new Error(name); }, fetch: fetchStub, URL, Buffer, AbortSignal, Request, Response, process: { env: { OPENROUTER_API_KEY: 'test-key' } } });
+  vm.runInNewContext(js, { exports, console: { warn() {} }, require(name) { if (name === './assistant') return assistantExports; if (name === '@/auth') return { auth: async () => session }; if (name === 'next/server') return { NextResponse: { json: Response.json } }; if (name.endsWith('/ontology-plan.mjs')) return { PLANNER_SYSTEM, validatePlan }; if (name.endsWith('/ontology-agent.mjs')) return { AGENT_SYSTEM, AGENT_REPAIR_SYSTEM, AGENT_RESPONSE_FORMAT, agentResponseFormat, agentTools, agentCompletionText, validateDecision }; throw new Error(name); }, fetch: fetchStub, URL, Buffer, AbortSignal, Request, Response, process: { env: { OPENROUTER_API_KEY: 'test-key' } } });
   return exports;
 }
+test('new assistant API returns plain prose and native tools without forcing answer JSON', async () => {
+  let sent;
+  const r = await route('chat', { fetch: async (_url, opts) => { sent = JSON.parse(opts.body); return Response.json({ choices: [{ message: { content: '금요일까지 제안서를 보내야 합니다.' } }] }); } });
+  const request = email => new Request('https://clara.test/api/chat', { method: 'POST', body: JSON.stringify({ mode: 'ontology_assistant', agentContext: { accountEmail: email, timeZone: 'Asia/Seoul' }, evidence: { nodes: [{ id: 'mail:real', properties: { text: 'Send proposal Friday.' } }] }, messages: [{ role: 'user', content: '어제 받은 메일 정리해봐' }], transcript: [], remainingTools: 10 }) });
+  const res = await r.POST(request('me@example.com'));
+  assert.equal(res.status, 200); assert.match((await res.json()).message.content, /금요일/);
+  assert.equal(sent.response_format, undefined); assert.equal(sent.tool_choice, 'auto');
+  assert.ok(JSON.stringify(sent.messages).includes('Send proposal Friday.'));
+  assert.equal((await r.POST(request('other@example.com'))).status, 403);
+});
+
 test('sync endpoints reject unauthenticated calls without contacting Google', async () => {
   const r = await route('ontology/sync', { session: null });
   assert.equal((await r.GET(new Request('https://clara.test/api/ontology/sync?source=mail'))).status, 401);

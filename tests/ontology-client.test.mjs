@@ -22,11 +22,10 @@ test('UI indexes both sources, stores confirmed links, restores them, and isolat
       if (url === '/api/auth/session') return Response.json({ user: { email } });
       if (url === '/api/chat') {
         const body = JSON.parse(opts.body);
-        if (body.mode === 'ontology_agent') {
-          const trace = body.agentTrace;
-          if (!trace.length) return Response.json({ decision: { action: 'tool', name: 'query_ontology', arguments: { plan: { operation: 'list', types: ['Email'], scope: 'received' } } } });
-          if (trace.length === 1) return Response.json({ decision: { action: 'tool', name: 'read_sources', arguments: { ids: [trace[0].output.nodes[0].id] } } });
-          return Response.json({ decision: { action: 'answer', text: '요청하신 자료를 확인했습니다. [mail:page124]' } });
+        if (body.mode === 'ontology_digest') return Response.json({ message: { content: body.evidence.nodes.map(n => n.id + ' ' + n.label).join('\n') } });
+        if (body.mode === 'ontology_assistant') {
+          if (!body.transcript.length) return Response.json({ message: { content: null, tool_calls: [{ id: 'call1', type: 'function', function: { name: 'get_mail', arguments: JSON.stringify({ period: 'all', scope: 'received' }) } }] } });
+          return Response.json({ message: { content: '요청하신 자료를 확인했습니다. [mail:page124]' } });
         }
         assert.equal(body.mode, 'ontology_plan');
         assert.ok(!body.ontologyContext);
@@ -112,9 +111,10 @@ test('UI indexes both sources, stores confirmed links, restores them, and isolat
     assert.equal((await paged.ClaraOntology.query('전체 메일 몇개야?')).total, 125);
     const agent = await paged.ClaraOntology.agent('이번엔 내가 신경써야 하는 게 뭔지 맥락을 보고 판단해봐', { messages: [{ role: 'assistant', content: '지원사업 자료를 확인하겠습니다.' }] });
     assert.equal(agent.kind, 'answer');
-    assert.deepEqual(agent.trace.map(t => t.name), ['query_ontology', 'read_sources']);
-    assert.equal(agent.trace[0].output.total, 125);
-    assert.equal(agent.trace[0].output.evidenceIsSample, true);
+    assert.deepEqual(agent.trace.filter(t => t.role === 'tool').map(t => t.name), ['get_mail']);
+    assert.equal(JSON.parse(agent.trace[1].content).total, 125);
+    assert.equal(JSON.parse(agent.trace[1].content).evidenceIsSample, false);
+    assert.equal(JSON.parse(agent.trace[1].content).bodiesRead, 125);
     assert.match(paged.document.getElementById('ont-page').textContent, /전체 125건/);
 
   } finally {
