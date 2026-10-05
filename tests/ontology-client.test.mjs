@@ -43,7 +43,8 @@ test('headless ontology indexes both sources, restores links, isolates accounts 
         return Response.json({records:[{id:cursor ? 'occ2' : 'occ1',calendarId:'primary',title:'Repeated',recurringEventId:'e1',start:{date:'2026-10-06'}}],cursor:cursor ? null : 'more'});
       }
       if (source === 'events') return Response.json({ records: [{ id: 'e1', calendarId: 'primary', title: '[Atlas] Meeting', start: { date: '2026-10-05' }, attendees: [{ email: 'founder@example.com' }] }], cursor: null });
-      if (source === 'mail' && paged && revised) { await new Promise(resolve => { releaseRefresh = resolve; }); return Response.json({ records: [{ id: 'new-page', subject: 'Updated mail', senderEmail: 'founder@example.com', dateISO: '2026-10-05T00:00:00Z', body: 'New source' }], cursor: null }); }
+      if (source === 'mail_checkpoint') return Response.json(paged ? {historyId:'100'} : {});
+      if (source === 'mail_changes' && paged && revised) { await new Promise(resolve => { releaseRefresh = resolve; }); return Response.json({ records: [{ id: 'new-page', subject: 'Updated mail', senderEmail: 'founder@example.com', dateISO: '2026-10-05T00:00:00Z', body: 'New source' }], cursor: null, historyId:'200', deletedIds:Array.from({length:125},(_,i)=>'page'+i) }); }
       if (source === 'mail') return Response.json({ records: paged ? Array.from({length:125}, (_,i) => ({id:'page'+i,subject:'Paged '+i,senderEmail:'founder@example.com',dateISO:'2026-09-30T00:00:00Z'})) : empty ? [] : [{ id: 'm1', subject: '[Atlas] plan', sender: 'Founder', senderEmail: 'founder@example.com', dateISO: '2026-10-04T10:00:00Z', body: 'Please review the deck.' }], cursor: null });
       throw new Error(String(url));
     };

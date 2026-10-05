@@ -1,3 +1,4 @@
+import { gmailFetch, invalidateGmail } from '@/lib/gmail-transport';
 import { auth } from '@/auth';
 import { NextResponse } from 'next/server';
 
@@ -11,12 +12,12 @@ type GoogleRecord = {
   recurringEventId?: string; originalStartTime?: Record<string, string>;
   location?: string; attendees?: { email?: string; displayName?: string }[];
   organizer?: { email?: string; displayName?: string }; recurrence?: string[]; htmlLink?: string;
-  iCalUID?: string; updated?: string;
+  iCalUID?: string; updated?: string; historyId?: string;
 };
-type GoogleResponse = GoogleRecord & { messages?: GoogleRecord[]; items?: GoogleRecord[]; nextPageToken?: string; resultSizeEstimate?: number; data?: string };
+type GoogleResponse = Partial<GoogleRecord> & { messages?: GoogleRecord[]; items?: GoogleRecord[]; nextPageToken?: string; resultSizeEstimate?: number; data?: string; historyId?: string; history?: { messages?: GoogleRecord[]; messagesDeleted?: { message: GoogleRecord }[] }[] };
 const privateHeaders = { 'Cache-Control': 'private, no-store' };
 class ProviderError extends Error {
-  constructor(public status: number, public quota: boolean) { super('Google API request failed'); }
+  constructor(public status: number, public quota: boolean, public retryAfter = 60) { super('Google API request failed'); }
 }
 function header(headers: Header[], name: string) {
   return (headers || []).find(h => h.name?.toLowerCase() === name.toLowerCase())?.value || '';
@@ -62,11 +63,11 @@ export async function GET(req: Request) {
   const source = params.get('source');
   const deadline = AbortSignal.timeout(24000);
   async function google(url: URL | string): Promise<GoogleResponse> {
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${token!.accessToken}` }, cache: 'no-store', signal: deadline });
+    const res = String(url).startsWith('https://gmail.googleapis.com/') ? await gmailFetch(url, token!.accessToken!, deadline) : await fetch(url, { headers: { Authorization: `Bearer ${token!.accessToken}` }, cache: 'no-store', signal: deadline });
     if (!res.ok) {
       const text = await res.text();
       const quota = res.status === 429 || /quota|rateLimitExceeded|userRateLimitExceeded/i.test(text);
-      throw new ProviderError(res.status, quota);
+      throw new ProviderError(res.status, quota, Number(res.headers.get('Retry-After') || 60));
     }
     return res.json();
   }
@@ -85,19 +86,50 @@ export async function GET(req: Request) {
       const text = mailText(await materialize(mail.payload || {})) || mail.snippet || '';
       return NextResponse.json({ id: 'mail:' + id, text: text.slice(offset, offset + 40000), totalChars: text.length, nextOffset: offset + 40000 < text.length ? offset + 40000 : null }, { headers: privateHeaders });
     }
-    if (source === 'mail') {
+    if (source === 'mail_checkpoint') {
+      const profile = await google('https://gmail.googleapis.com/gmail/v1/users/me/profile');
+      return NextResponse.json({ historyId: profile.historyId }, { headers: privateHeaders });
+    }
+    if (source === 'mail' || source === 'mail_changes') {
       const url = new URL('https://gmail.googleapis.com/gmail/v1/users/me/messages');
       url.searchParams.set('maxResults', '10');
       url.searchParams.set('includeSpamTrash', 'true');
       if (params.get('cursor')) url.searchParams.set('pageToken', params.get('cursor')!);
-      const list = await google(url);
+      let list: GoogleResponse;
+      const deletedIds: string[] = [];
+      if (source === 'mail_changes') {
+        const historyId = params.get('historyId') || '';
+        if (!/^\d{1,30}$/.test(historyId)) return NextResponse.json({ error: 'invalid_history' }, { status: 400, headers: privateHeaders });
+        const historyUrl = new URL('https://gmail.googleapis.com/gmail/v1/users/me/history');
+        historyUrl.searchParams.set('startHistoryId', historyId);
+        historyUrl.searchParams.set('maxResults', '10');
+        let offset = 0, pageToken = '';
+        if (params.get('cursor')) {
+          try { const cursor = JSON.parse(Buffer.from(params.get('cursor')!, 'base64url').toString()); offset = cursor.offset; pageToken = cursor.pageToken; }
+          catch { return NextResponse.json({ error: 'invalid_cursor' }, { status: 400, headers: privateHeaders }); }
+          if (!Number.isSafeInteger(offset) || offset < 0 || typeof pageToken !== 'string') return NextResponse.json({ error: 'invalid_cursor' }, { status: 400, headers: privateHeaders });
+        }
+        if (pageToken) historyUrl.searchParams.set('pageToken', pageToken);
+        let history: GoogleResponse;
+        try { history = await google(historyUrl); }
+        catch (err) { if (err instanceof ProviderError && err.status === 404) return NextResponse.json({ reset: true }, { headers: privateHeaders }); throw err; }
+        const changed = new Set<string>();
+        for (const entry of history.history || []) {
+          for (const message of entry.messages || []) changed.add(message.id);
+          for (const removal of entry.messagesDeleted || []) changed.add(removal.message.id);
+        }
+        const ids = [...changed], batch = ids.slice(offset, offset + 10);
+        for (const id of batch) invalidateGmail(token!.accessToken!, id);
+        const next = offset + 10 < ids.length ? { offset: offset + 10, pageToken } : history.nextPageToken ? { offset: 0, pageToken: history.nextPageToken } : null;
+        list = { messages: batch.map(id => ({ id })), nextPageToken: next ? Buffer.from(JSON.stringify(next)).toString('base64url') : undefined, historyId: history.historyId };
+      } else list = await google(url);
       const records: Record<string, unknown>[] = [];
       // Sequential reads keep indexing below the per-user query quota.
       // A failed page is atomic: its cursor is not advanced by the client.
       for (const item of list.messages || []) {
         let mail: GoogleRecord;
-        try { mail = await google(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(item.id)}?format=full`); }
-        catch (err) { if (err instanceof ProviderError && err.status === 404) continue; throw err; }
+        try { mail = await google(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(item.id)}?format=full`) as GoogleRecord; }
+        catch (err) { if (err instanceof ProviderError && err.status === 404) { deletedIds.push(item.id); continue; } throw err; }
         const h = mail.payload?.headers || [];
         const from = header(h, 'From');
         const senderEmail = (from.match(/[\w.!#$%&'*+/=?^`{|}~-]+@[\w.-]+\.[a-z]{2,}/i) || [''])[0].toLowerCase();
@@ -112,7 +144,7 @@ export async function GET(req: Request) {
           attachments: attachments(mail.payload || {})
         });
       }
-      return NextResponse.json({ records, cursor: list.nextPageToken || null, estimatedTotal: list.resultSizeEstimate }, { headers: privateHeaders });
+      return NextResponse.json({ records, cursor: list.nextPageToken || null, estimatedTotal: list.resultSizeEstimate, deletedIds, historyId: list.historyId }, { headers: privateHeaders });
     }
     if (source === 'calendars') {
       const url = new URL('https://www.googleapis.com/calendar/v3/users/me/calendarList');
@@ -152,7 +184,7 @@ export async function GET(req: Request) {
     }
     return NextResponse.json({ error: 'invalid_source' }, { status: 400, headers: privateHeaders });
   } catch (err) {
-    if (err instanceof ProviderError) return NextResponse.json({ error: err.quota ? 'quota_exceeded' : 'google_sync_failed', retryAfter: err.quota ? 60 : undefined }, { status: err.quota ? 429 : err.status, headers: privateHeaders });
+    if (err instanceof ProviderError) return NextResponse.json({ error: err.quota ? 'quota_exceeded' : 'google_sync_failed', retryAfter: err.quota ? err.retryAfter : undefined }, { status: err.quota ? 429 : err.status, headers: privateHeaders });
     return NextResponse.json({ error: 'sync_unavailable' }, { status: 503, headers: privateHeaders });
   }
 }

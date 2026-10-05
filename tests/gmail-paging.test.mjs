@@ -11,7 +11,7 @@ const message = id => ({id,threadId:id,labelIds:['INBOX'],payload:{headers:[{nam
 async function api(fetchStub) {
   const source=await readFile(new URL('../src/app/api/gmail/messages/route.ts',import.meta.url),'utf8');
   const exports={};
-  vm.runInNewContext(ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,fetch:fetchStub,URL,Buffer,setTimeout:fn=>fn(),console:{error(){}},require(name){if(name==='@/auth')return {auth:async()=>({accessToken:'test'})};if(name==='next/server')return {NextResponse:{json:Response.json}};throw Error(name);}});
+  vm.runInNewContext(ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,fetch:fetchStub,URL,Buffer,setTimeout:fn=>fn(),console:{error(){}},require(name){if(name==='@/lib/gmail-transport')return {gmailFetch:(url)=>fetchStub(url),invalidateGmail(){}};if(name==='@/auth')return {auth:async()=>({accessToken:'test'})};if(name==='next/server')return {NextResponse:{json:Response.json}};throw Error(name);}});
   return exports.GET;
 }
 
@@ -50,7 +50,7 @@ async function client(pages) {
   const requests=[],timers=[];
   const emails=[];
   const ctx=vm.createContext({document:w.document,window:w,EMAILS:emails,starredIds:new Set(),AbortController,selId:null,_gmailConnected:false,_gmailIcon:()=>'',_gmailShortDate:()=> '10/05',URLSearchParams,Date,console,showToast:()=>{},_updateGmailBtn:()=>{},setTimeout(fn,ms){timers.push({fn,ms});return timers.length;},clearTimeout(){},fetch:async url=>{requests.push(url);const page=pages.shift();return Response.json(page.body??page,{status:page.status||200});},renderList:()=>{w.document.getElementById('el-scroll').innerHTML=emails.map(e=>'<div class="em-row">'+e.subject+'</div>').join('');vm.runInContext('_renderGmailPagingFooter()',ctx);}});
-  vm.runInContext(html.slice(html.indexOf('let _gmailNextPageToken'),html.indexOf('function _gmailConnect()')),ctx);
+  vm.runInContext(html.slice(html.indexOf('const _gmailFolderCache'),html.indexOf('function _gmailConnect()')),ctx);
   return {w,ctx,requests,timers,emails,run:code=>vm.runInContext(code,ctx)};
 }
 const pageEmail=id=>({id,sender:'Sender',senderEmail:'sender@example.com',subject:'Mail '+id,date:'2026-10-05',body:'Original',attachments:[]});
@@ -149,10 +149,17 @@ test('Sidebar matches the requested Gmail Korean names and order',async()=>{
 test('Star, unstar and archive actions update native Gmail labels',async()=>{
   const source=await readFile(new URL('../src/app/api/gmail/action/route.ts',import.meta.url),'utf8');
   const exports={},calls=[];
-  vm.runInNewContext(ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,fetch:async(url,options)=>{calls.push({url,options});return Response.json({id:'abc'});},require(name){if(name==='@/auth')return {auth:async()=>({accessToken:'test'})};if(name==='next/server')return {NextResponse:{json:Response.json}};throw Error(name);}});
+  vm.runInNewContext(ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,fetch:async(url,options)=>{calls.push({url,options});return Response.json({id:'abc'});},require(name){if(name==='@/lib/gmail-transport')return {gmailFetch:(url)=>fetchStub(url),invalidateGmail(){}};if(name==='@/auth')return {auth:async()=>({accessToken:'test'})};if(name==='next/server')return {NextResponse:{json:Response.json}};throw Error(name);}});
   for(const [action,add,remove] of [['star',['STARRED'],[]],['unstar',[],['STARRED']],['archive',[],['INBOX']]]){
     const response=await exports.POST(new Request('https://clara.test/api/gmail/action',{method:'POST',body:JSON.stringify({action,gmailId:'abc'})}));
     assert.equal(response.status,200);assert.match(calls.at(-1).url,/users\/me\/messages\/abc\/modify$/);
     assert.deepEqual(JSON.parse(calls.at(-1).options.body),{addLabelIds:add,removeLabelIds:remove});
   }
+});
+
+
+test('returning to a recently loaded folder reuses mails and its cursor without another API call',async()=>{
+  const c=await client([{emails:ids.map(pageEmail),nextPageToken:'older'},{emails:[pageEmail('sent')],nextPageToken:null}]);
+  await c.run("_gmailFetchMessages('inbox')");await c.run("_gmailFetchMessages('sent')");await c.run("_gmailFetchMessages('inbox')");
+  assert.equal(c.requests.length,2);assert.equal(c.emails.length,30);assert.equal(c.run('_gmailNextPageToken'),'older');
 });

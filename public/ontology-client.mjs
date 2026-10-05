@@ -7,6 +7,7 @@ import { retrieveEvidence } from './ontology-retrieval.mjs';
 const emptyState = () => ({ version: 1, emails: {}, events: {}, calendars: [], manual: { nodes: [], edges: [] }, sync: { mail: { status: 'idle', cursor: null }, calendar: { status: 'idle', index: 0, cursor: null, listCursor: null, listed: false } } });
 let state = emptyState(), graph = buildOntology(), account = '', db, running = false, paused = false, persistence = true, queued = false;
 const plannedQueries = new Map();
+let refreshRequested = false;
 let resolveReady;
 const ready = new Promise(resolve => { resolveReady = resolve; });
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -50,7 +51,7 @@ async function save() {
 async function page(params, signal) {
   const res = await fetch('/api/ontology/sync?' + new URLSearchParams(params), { credentials: 'same-origin', signal });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) { const error = new Error(data.error || '동기화 오류'); error.status = res.status; throw error; }
+  if (!res.ok) { const error = new Error(data.error || '동기화 오류'); error.status = res.status; error.retryAfter = Number(data.retryAfter || 60); throw error; }
   return data;
 }
 let occurrenceWork = Promise.resolve();
@@ -95,6 +96,24 @@ async function run() {
   try {
     const work = async lock => {
       if (lock === null) {  return; }
+      // Re-read the shared account snapshot after acquiring the tab lock. A
+      // waiting tab must not restart the scan already completed by its peer.
+      if (navigator.locks && persistence) { const saved = await restore(); if (saved?.version === 1) state = saved; }
+      if (refreshRequested) {
+        refreshRequested = false;
+        const previous = state.sync.mail;
+        state.sync = emptyState().sync;
+        if (previous.status !== 'complete' && previous.cursor) {
+          state.sync.mail = previous;
+          state.sync.mail.status = 'syncing';
+        } else if (previous.historyId && (previous.status === 'complete' || previous.incremental)) {
+          state.sync.mail.historyId = previous.historyId;
+          state.sync.mail.incremental = true;
+        } else { state.sync.mail.refreshing = true; state.sync.mail.seenIds = []; }
+        state.sync.calendar.refreshing = true; state.sync.calendar.seenIds = [];
+        state.calendars = [];
+        await save(); rebuild();
+      }
       let preferMail = true;
       while (!paused && (!['complete', 'error'].includes(state.sync.mail.status) || !['complete', 'error'].includes(state.sync.calendar.status))) {
         const mailPending = !['complete', 'error'].includes(state.sync.mail.status), calendarPending = !['complete', 'error'].includes(state.sync.calendar.status);
@@ -122,14 +141,27 @@ async function run() {
             }
           } else {
             const mail = state.sync.mail; mail.status = 'syncing';
-            const data = await page({ source: 'mail', ...(mail.cursor ? { cursor: mail.cursor } : {}) });
+            if (!mail.cursor && !mail.historyId && !mail.checkpointAttempted) {
+              const checkpoint = await page({ source: 'mail_checkpoint' });
+              mail.historyId = checkpoint.historyId;
+              mail.checkpointAttempted = true;
+              await save();
+            }
+            const data = await page({ source: mail.incremental ? 'mail_changes' : 'mail', ...(mail.incremental ? { historyId: mail.historyId } : {}), ...(mail.cursor ? { cursor: mail.cursor } : {}) });
+            if (data.reset) {
+              delete mail.historyId; delete mail.incremental; delete mail.checkpointAttempted;
+              mail.cursor = null; mail.refreshing = true; mail.seenIds = [];
+              await save(); continue;
+            }
+            for (const id of data.deletedIds || []) delete state.emails[id];
+            if (!data.cursor && mail.incremental && data.historyId) mail.historyId = data.historyId;
             for (const m of data.records) state.emails[m.id] = m;
             if (mail.refreshing) mail.seenIds.push(...data.records.map(m => m.id));
-            mail.estimatedTotal = data.estimatedTotal;
+            if (data.estimatedTotal !== undefined) mail.estimatedTotal = data.estimatedTotal;
             mail.cursor = data.cursor;
             if (!mail.cursor) {
               if (mail.refreshing) for (const id of Object.keys(state.emails)) if (!mail.seenIds.includes(id)) delete state.emails[id];
-              delete mail.refreshing; delete mail.seenIds;
+              delete mail.refreshing; delete mail.seenIds; delete mail.incremental;
               mail.status = 'complete'; mail.finishedAt = new Date().toISOString();
             }
           }
@@ -141,7 +173,7 @@ async function run() {
           if (err.status === 429) {
             
            
-            for (let i = 0; i < 60 && !paused; i++) await wait(1000);
+            for (let i = 0; i < Math.max(60, err.retryAfter || 60) && !paused; i++) await wait(1000);
           } else {
             active.status = 'error'; active.error = err.status === 401 ? '로그인이 만료되었습니다. 다시 로그인해 주세요.' : '자동 동기화 중단: ' + err.message;
             if (err.status === 401) paused = true;
@@ -159,17 +191,10 @@ async function run() {
 }
 async function refresh() {
   if (running) { queued = true; return; }
-  // Keep the usable graph while refreshing. Prune removed sources only after
-  // the corresponding complete pass succeeds, never after an incomplete page.
-  state.sync = emptyState().sync;
-  state.sync.mail.refreshing = true; state.sync.mail.seenIds = [];
-  state.sync.calendar.refreshing = true; state.sync.calendar.seenIds = [];
-  state.calendars = [];
-  await save(); rebuild(); await run();
+  refreshRequested = true;
+  await run();
 }
 function sourceChanged() {
-  state.sync.mail.status = 'stale'; state.sync.calendar.status = 'stale';
-  save(); rebuild();
   if (account) void refresh();
 }
 function resumeBackground() {

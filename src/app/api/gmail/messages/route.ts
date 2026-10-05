@@ -1,3 +1,4 @@
+import { gmailFetch } from '@/lib/gmail-transport';
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 
@@ -163,15 +164,13 @@ export async function GET(req: Request) {
   if (mailbox.includeSpamTrash) listUrl.searchParams.set("includeSpamTrash", "true");
   if (pageToken) listUrl.searchParams.set("pageToken", pageToken);
 
-  const listRes = await fetch(listUrl.toString(), {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
+  const listRes = await gmailFetch(listUrl, accessToken);
   if (!listRes.ok) {
     const bodyText = await listRes.text().catch(() => "");
     console.error(`gmail list failed status=${listRes.status} body=${bodyText.slice(0, 400)}`);
     const quotaExceeded = listRes.status === 429 || /quota|rateLimitExceeded|dailyLimitExceeded/i.test(bodyText);
     return NextResponse.json(
-      { error: quotaExceeded ? "quota_exceeded" : "gmail_list_failed", detail: bodyText.slice(0, 300) },
+      { error: quotaExceeded ? "quota_exceeded" : "gmail_list_failed", detail: bodyText.slice(0, 300), retryAfterMs: Math.max(60000, Number(listRes.headers.get("Retry-After") || 60) * 1000) },
       { status: listRes.status }
     );
   }
@@ -180,6 +179,7 @@ export async function GET(req: Request) {
   const nextPageToken: string | null = listData.nextPageToken || null;
 
   let quotaHit = false;
+  let retryAfterMs = 60000;
   let incompletePage = false;
   // A resumed page only needs the messages not already held by this browser.
   const loadedIds = new Set((searchParams.get("loadedIds") || "").split(",").filter(id => /^[a-f0-9]{1,32}$/i.test(id)).slice(0, 30));
@@ -187,14 +187,12 @@ export async function GET(req: Request) {
   // 단, "분당 할당량 초과"는 몇 초 재시도한다고 풀리지 않으므로 그 경우엔 즉시 포기한다 (더 두드리면 역효과).
   async function fetchOne(id: string, attempt = 0): Promise<any | null> {
     if (quotaHit) return null; // 이미 할당량 초과를 확인했으면 나머지는 시도조차 하지 않음
-    const r = await fetch(
-      `https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=full`,
-      { headers: { Authorization: `Bearer ${accessToken}` } }
-    );
+    const r = await gmailFetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=full`, accessToken);
     if (r.ok) return r.json();
     const bodyText = await r.text().catch(() => "");
     if (r.status === 429 || /quota|rateLimitExceeded|dailyLimitExceeded/i.test(bodyText)) {
       quotaHit = true;
+      retryAfterMs = Math.max(60000, Number(r.headers.get("Retry-After") || 60) * 1000);
       incompletePage = true;
       console.error(`gmail quota exceeded, aborting remaining fetches`);
       return null;
@@ -262,5 +260,5 @@ export async function GET(req: Request) {
     };
   });
 
-  return NextResponse.json({ emails, mailbox: folder, nextPageToken: incompletePage ? pageToken : nextPageToken, retryPage: incompletePage, quotaExceeded: quotaHit, retryAfterMs: quotaHit ? 60000 : incompletePage ? 5000 : 0 });
+  return NextResponse.json({ emails, mailbox: folder, nextPageToken: incompletePage ? pageToken : nextPageToken, retryPage: incompletePage, quotaExceeded: quotaHit, retryAfterMs: quotaHit ? retryAfterMs : incompletePage ? 5000 : 0 });
 }
