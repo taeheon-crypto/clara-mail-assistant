@@ -273,7 +273,7 @@ window.ClaraOntology = {
     for (const message of history) for (const match of message.content.matchAll(/\[((?:mail|event):[^\]\n]+)\]/g)) if (graph.byId.has(match[1])) allowed.add(match[1]);
     const source = n => {
       allowed.add(n.id);
-      return { id: n.id, type: n.type, label: n.label, properties: { date: n.properties.date, sender: n.properties.sender, senderEmail: n.properties.senderEmail, to: n.properties.to, text: String(n.properties.text || ''), textIsExcerpt: Boolean(n.properties.textTruncated || String(n.properties.text || '').length >= 24000) }, provenance: n.provenance };
+      return { id: n.id, type: n.type, label: n.label, properties: { ...n.properties, text: String(n.properties.text || ''), textIsExcerpt: Boolean(n.properties.textTruncated || String(n.properties.text || '').length >= 24000) }, provenance: n.provenance };
     };
     const request = async (mode, evidence, transcript = [], remainingTools = 10) => {
       current();
