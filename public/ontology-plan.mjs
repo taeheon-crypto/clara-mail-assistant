@@ -13,26 +13,26 @@ const keys = ['operation', 'types', 'scope', 'start', 'endExclusive', 'filters',
 const text = (v, max = 200) => typeof v === 'string' && v.trim().length > 0 && v.length <= max;
 const day = v => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(v + 'T00:00:00Z')) && new Date(v + 'T00:00:00Z').toISOString().slice(0, 10) === v;
 export function validatePlan(value) {
-  const fail = () => ({ error: 'AI 조회 계획을 검증하지 못했습니다. 조건을 그대로 유지해 다시 질문해 주세요.' });
-  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(k => !keys.includes(k))) return fail();
-  if (!PLAN_SCHEMA.operation.includes(value.operation)) return fail();
-  if (value.operation === 'clarify') return text(value.clarification, 1000) ? { plan: { operation: 'clarify', clarification: value.clarification } } : fail();
-  if (!Array.isArray(value.types) || !value.types.length || value.types.length > 4 || value.types.some(t => !PLAN_SCHEMA.types.includes(t))) return fail();
-  if (!PLAN_SCHEMA.scope.includes(value.scope)) return fail();
+  const fail = (code = 'plan_schema_mismatch') => ({ code, error: 'AI 조회 계획을 검증하지 못했습니다. 조건을 그대로 유지해 다시 질문해 주세요.' });
+  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(k => !keys.includes(k))) return fail('plan_object_or_unknown_fields');
+  if (!PLAN_SCHEMA.operation.includes(value.operation)) return fail('plan_operation_invalid');
+  if (value.operation === 'clarify') return text(value.clarification, 1000) ? { plan: { operation: 'clarify', clarification: value.clarification } } : fail('plan_clarification_invalid');
+  if (!Array.isArray(value.types) || !value.types.length || value.types.length > 4 || value.types.some(t => !PLAN_SCHEMA.types.includes(t))) return fail('plan_types_invalid');
+  if (!PLAN_SCHEMA.scope.includes(value.scope)) return fail('plan_scope_invalid');
   if (value.start != null || value.endExclusive != null) {
-    if (!day(value.start) || !day(value.endExclusive) || value.start >= value.endExclusive) return fail();
+    if (!day(value.start) || !day(value.endExclusive) || value.start >= value.endExclusive) return fail('plan_date_range_invalid');
   }
-  if (value.filters !== undefined && (!Array.isArray(value.filters) || value.filters.length > 8 || value.filters.some(f => !f || Object.keys(f).some(k => !['name', 'relation', 'path', 'entityType'].includes(k)) || !text(f.name) || !PLAN_SCHEMA.relations.includes(f.relation) || f.entityType !== undefined && !['Person', 'Project', 'Event', 'Thread'].includes(f.entityType) || f.path !== undefined && (!Array.isArray(f.path) || !f.path.length || f.path.length > 4 || f.relation !== 'related' || f.path.some(s => !s || Object.keys(s).some(k => !['relation', 'direction'].includes(k)) || !Object.hasOwn(RELATIONS, s.relation) || !['in', 'out'].includes(s.direction)))))) return fail();
-  if (value.keywords !== undefined && (!Array.isArray(value.keywords) || value.keywords.length > 8 || value.keywords.some(k => !text(k)))) return fail();
-  if (['read', 'unread'].some(k => value[k] !== undefined && typeof value[k] !== 'boolean') || value.read && value.unread) return fail();
-  if (value.assumptions !== undefined && (!Array.isArray(value.assumptions) || value.assumptions.length > 5 || value.assumptions.some(a => !text(a, 500)))) return fail();
-  if (value.operation === 'aggregate' && (!PLAN_SCHEMA.groupBy.includes(value.groupBy) || !PLAN_SCHEMA.direction.includes(value.direction))) return fail();
-  if (value.operation !== 'aggregate' && (value.groupBy !== undefined || value.direction !== undefined)) return fail();
-  if (!['aggregate', 'list'].includes(value.operation) && (value.order !== undefined || value.limit !== undefined)) return fail();
-  if (value.groupBy !== undefined && !PLAN_SCHEMA.groupBy.includes(value.groupBy) || value.direction !== undefined && !PLAN_SCHEMA.direction.includes(value.direction)) return fail();
-  if (value.order !== undefined && !['asc', 'desc'].includes(value.order) || value.limit !== undefined && (!Number.isInteger(value.limit) || value.limit < 1 || value.limit > 50)) return fail();
-  if (value.operation === 'aggregate' && ['person', 'domain'].includes(value.groupBy) && value.types.some(t => !['Email', 'Event'].includes(t))) return fail();
-  if (value.types.includes('Event') && value.direction && value.direction !== 'exchanged') return fail();
+  if (value.filters !== undefined && (!Array.isArray(value.filters) || value.filters.length > 8 || value.filters.some(f => !f || Object.keys(f).some(k => !['name', 'relation', 'path', 'entityType'].includes(k)) || !text(f.name) || !PLAN_SCHEMA.relations.includes(f.relation) || f.entityType !== undefined && !['Person', 'Project', 'Event', 'Thread'].includes(f.entityType) || f.path !== undefined && (!Array.isArray(f.path) || !f.path.length || f.path.length > 4 || f.relation !== 'related' || f.path.some(s => !s || Object.keys(s).some(k => !['relation', 'direction'].includes(k)) || !Object.hasOwn(RELATIONS, s.relation) || !['in', 'out'].includes(s.direction)))))) return fail('plan_filters_invalid');
+  if (value.keywords !== undefined && (!Array.isArray(value.keywords) || value.keywords.length > 8 || value.keywords.some(k => !text(k)))) return fail('plan_keywords_invalid');
+  if (['read', 'unread'].some(k => value[k] !== undefined && typeof value[k] !== 'boolean') || value.read && value.unread) return fail('plan_read_flags_invalid');
+  if (value.assumptions !== undefined && (!Array.isArray(value.assumptions) || value.assumptions.length > 5 || value.assumptions.some(a => !text(a, 500)))) return fail('plan_assumptions_invalid');
+  if (value.operation === 'aggregate' && (!PLAN_SCHEMA.groupBy.includes(value.groupBy) || !PLAN_SCHEMA.direction.includes(value.direction))) return fail('plan_aggregate_invalid');
+  if (value.operation !== 'aggregate' && (value.groupBy !== undefined || value.direction !== undefined)) return fail('plan_group_without_aggregate');
+  if (!['aggregate', 'list'].includes(value.operation) && (value.order !== undefined || value.limit !== undefined)) return fail('plan_order_without_list');
+  if (value.groupBy !== undefined && !PLAN_SCHEMA.groupBy.includes(value.groupBy) || value.direction !== undefined && !PLAN_SCHEMA.direction.includes(value.direction)) return fail('plan_group_or_direction_invalid');
+  if (value.order !== undefined && !['asc', 'desc'].includes(value.order) || value.limit !== undefined && (!Number.isInteger(value.limit) || value.limit < 1 || value.limit > 50)) return fail('plan_order_or_limit_invalid');
+  if (value.operation === 'aggregate' && ['person', 'domain'].includes(value.groupBy) && value.types.some(t => !['Email', 'Event'].includes(t))) return fail('plan_aggregate_types_invalid');
+  if (value.types.includes('Event') && value.direction && value.direction !== 'exchanged') return fail('plan_event_direction_invalid');
   return { plan: { ...value, types: [...new Set(value.types)], filters: value.filters || [], keywords: value.keywords || [], assumptions: value.assumptions || [] } };
 }
 

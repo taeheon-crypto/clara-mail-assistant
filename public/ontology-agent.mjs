@@ -126,7 +126,7 @@ export function validateDecision(value) {
     // Models sometimes put the plan directly in arguments rather than {plan}.
     const plan = normalizeAgentPlan(Object.hasOwn(args, 'plan') ? args.plan : args);
     const checked = validatePlan(plan);
-    return checked.plan && checked.plan.operation !== 'clarify' ? { decision: { ...value, arguments: { plan: checked.plan } } } : fail(diagnosePlan(plan));
+    return checked.plan && checked.plan.operation !== 'clarify' ? { decision: { ...value, arguments: { plan: checked.plan } } } : fail(diagnosePlan(plan) !== 'plan_schema_mismatch' ? diagnosePlan(plan) : checked.code);
   }
   if (value.name === 'search_evidence') {
     if (Object.keys(args).some(k => !['question', 'plan'].includes(k)) || typeof args.question !== 'string' || !args.question.trim() || args.question.length > 2000) return fail();
