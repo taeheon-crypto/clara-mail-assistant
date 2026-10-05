@@ -78,7 +78,7 @@ function selectQuery(graph, plan) {
     const candidates = graph.nodes.filter(n => (filter.entityType ? n.type === filter.entityType : filter.relation === 'project' ? n.type === 'Project' : ['from', 'to'].includes(filter.relation) ? n.type === 'Person' : ['Person', 'Project'].includes(n.type)) && (normalize(n.label).includes(name) || normalize(n.properties.email) === name));
     const exact = candidates.filter(n => normalize(n.label) === name || normalize(n.properties.email) === name);
     const entities = exact.length ? exact : candidates;
-    if (entities.length !== 1) ambiguity = entities.length ? '같은 이름이나 비슷한 이름의 객체가 여러 개입니다. 이메일 주소나 정확한 프로젝트 이름을 지정해 주세요.' : '지식 연결에서 해당 사람·프로젝트를 찾지 못했습니다. 이메일 주소나 정확한 이름을 지정해 주세요.';
+    if (entities.length !== 1) ambiguity = entities.length ? '같은 이름이나 비슷한 이름의 객체가 여러 개입니다. 이메일 주소나 정확한 프로젝트 이름을 지정해 주세요.' : '연동 자료에서 해당 사람·프로젝트를 찾지 못했습니다. 이메일 주소나 정확한 이름을 지정해 주세요.';
     else {
       if (filter.path) {
         const reached = traversePath(graph, entities[0].id, filter.path);
@@ -140,7 +140,7 @@ export function queryOntology(graph, question, options = {}) {
   const occurrenceRange = graph.coverage.calendar?.ranges?.[rangeKey(plan)];
   const complete = sources.every(s => s === 'calendar' && plan.start ? occurrenceRange?.status === 'complete' && (!(plan.filter || plan.filters?.length) || graph.coverage.calendar?.status === 'complete') : graph.coverage[s]?.status === 'complete');
   const stale = sources.some(s => graph.coverage[s]?.status === 'stale');
-  const coverageText = complete ? '마지막 동기화된 자료 기준입니다. 새 자료는 지식 연결에서 다시 동기화해 주세요.' : stale ? '변경 후 다시 동기화하지 않은 자료 기준입니다. 최신 전체 결과가 아닙니다.' : '전체 동기화가 끝나지 않아 현재 수집된 자료만 조회했습니다. 결과가 0건이어도 실제로 없다는 뜻은 아닙니다.';
+  const coverageText = complete ? '마지막 동기화된 자료 기준입니다. 새 자료는 자동으로 반영됩니다.' : stale ? '변경 후 다시 동기화하지 않은 자료 기준입니다. 최신 전체 결과가 아닙니다.' : '전체 동기화가 끝나지 않아 현재 수집된 자료만 조회했습니다. 결과가 0건이어도 실제로 없다는 뜻은 아닙니다.';
   const rangeText = plan.start ? `${plan.start} ~ ${shift(plan.end, -1)} (${plan.timeZone}, 종료일 포함)` : `전체 기간 (${plan.timeZone})`;
   const recurring = plan.types.includes('Event') && plan.start && occurrenceRange?.status !== 'complete' ? graph.nodes.filter(n => n.type === 'Event' && n.properties.recurrence?.length).length : 0;
   const scopeText = plan.types.includes('Email') ? plan.scope === 'sent' ? '보낸 메일' : plan.scope === 'inbox' ? '현재 받은편지함' : plan.scope === 'all' ? '모든 메일(보낸 메일·스팸·휴지통 포함)' : '수신 메일(보낸 메일·임시보관 제외, 보관·스팸·휴지통 포함)' : '저장된 일정·업무·문서';
@@ -149,7 +149,7 @@ export function queryOntology(graph, question, options = {}) {
   const matchedTotal = selected.records.length;
   if (plan.kind === 'list' && plan.limit) selected.records = selected.records.slice(0, plan.limit);
   const page = selected.records.slice(0, 50);
-  const text = [`${rangeText} · ${scopeText}${plan.filter ? ' · ' + plan.filter.name : ''}${plan.unread ? ' · 안 읽은 메일' : plan.read ? ' · 읽은 메일' : ''}`, `${complete ? '' : '현재 수집된 자료에서 '}조회 결과 ${selected.records.length}건. [ontology:query]`, notes, plan.kind === 'list' ? page.map((n, i) => `${i + 1}. ${n.properties.date || ''} ${n.properties.sender || ''} · ${n.label} [${n.id}]`).join('\n') : '', plan.kind === 'list' && selected.records.length > 50 ? `총 ${selected.records.length}건 중 1~50건 표시. 전체 결과는 지식 연결 → 조회 결과에서 모든 페이지를 확인할 수 있습니다.` : ''].filter(Boolean).join('\n\n');
+  const text = [`${rangeText} · ${scopeText}${plan.filter ? ' · ' + plan.filter.name : ''}${plan.unread ? ' · 안 읽은 메일' : plan.read ? ' · 읽은 메일' : ''}`, `${complete ? '' : '현재 수집된 자료에서 '}조회 결과 ${selected.records.length}건. [ontology:query]`, notes, plan.kind === 'list' ? page.map((n, i) => `${i + 1}. ${n.properties.date || ''} ${n.properties.sender || ''} · ${n.label} [${n.id}]`).join('\n') : '', plan.kind === 'list' && selected.records.length > 50 ? `총 ${selected.records.length}건 중 1~50건 표시. 원문 목록은 요약용이며 실제 조회 대상은 전체 일치 자료입니다.` : ''].filter(Boolean).join('\n\n');
   return { kind: plan.kind, plan, records: selected.records, paths: selected.paths, total: selected.records.length, matchedTotal, complete, text: matchedTotal !== selected.records.length ? text + `\n\n전체 일치 ${matchedTotal}건 중 날짜순 ${plan.limit}건을 조회했습니다.` : text };
 }
 export function retrievalQuery(graph, question, options = {}) {
@@ -227,7 +227,7 @@ function aggregateQuery(graph, plan, selected, options) {
     ranked.length > limit ? '기준 건수가 같은 공동 순위를 함께 표시합니다.' : '',
     shown.length ? shown.map((r, i) => `${i + 1}. ${r.label}${r.email && r.label !== r.email ? ' <' + r.email + '>' : ''}${r.candidate ? ' (프로젝트 후보)' : ''}: ${r.count}건 (받은 ${r.received} · 보낸 ${r.sent} · 일정 ${r.events})\n근거: ${r.sourceIds.slice(0, 3).map(id => '[' + id + ']').join(' ')}`).join('\n\n') : '현재 집계할 자료가 없습니다.',
     ranked.length > shown.length ? `공동 순위 ${ranked.length}개 중 첫 50개를 표시합니다.` : '',
-    '전체 집계 근거는 지식 연결 → 조회 결과에서 확인할 수 있습니다.',
+    '전체 일치 원문을 기준으로 집계했습니다.',
   ].filter(Boolean).join('\n\n');
   return { kind: 'aggregate', plan, groups: rows, records: selected.records.filter(n => used.has(n.id)), total: used.size, complete: options.complete, text };
 }

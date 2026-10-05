@@ -1209,7 +1209,6 @@ body{display:flex;flex-direction:row;align-items:center;justify-content:center;
                 <div id="g-task-chips" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px"></div>
               </div>
               <div style="display:flex;align-items:center;gap:2px;flex-shrink:0">
-                <button class="g-ico-btn" title="관련 사람·프로젝트·일정" aria-label="메일 지식 연결" onclick="var e=EMAILS.find(function(x){return x.id===selId});if(e &amp;&amp; e.gmailId)window.ClaraOntology?.openMail(e.gmailId)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="5" cy="5" r="3"/><circle cx="19" cy="7" r="3"/><circle cx="10" cy="19" r="3"/><path d="m8 5 8 2M6 8l3 8m8-6-5 7"/></svg></button>
                 <span class="gmail-nav-cnt" id="g-nav-cnt" style="font-size:12px;color:var(--fg-s);padding:0 2px;white-space:nowrap"></span>
                 <button class="g-ico-btn" title="이전" onclick="emailNav(-1)"><svg viewBox="0 0 24 24" stroke="currentColor"><path d="m15 18-6-6 6-6"/></svg></button>
                 <button class="g-ico-btn" title="다음" onclick="emailNav(1)"><svg viewBox="0 0 24 24" stroke="currentColor"><path d="m9 18 6-6-6-6"/></svg></button>
@@ -6599,12 +6598,7 @@ async function toggleCpMicInt() {
         <div><span class="cal-ep-tag" style="background:${color}">${escHtml((ev.type || 'meeting').charAt(0).toUpperCase()+(ev.type || 'meeting').slice(1))}</span></div>
       </div>`;
 
-    if (ev.calendarId && ev.id) {
-      var knowledgeBtn = document.createElement('button');
-      knowledgeBtn.className = 'cal-ep-hbtn'; knowledgeBtn.textContent = '지식 연결';
-      knowledgeBtn.onclick = function(){ window.ClaraOntology?.openEvent(ev.calendarId, ev.recurringEventId || ev.id); };
-      popup.querySelector('.cal-ep-header').prepend(knowledgeBtn);
-    }
+
     popup.classList.remove('show');
     document.body.appendChild(popup);
     // Position near trigger
