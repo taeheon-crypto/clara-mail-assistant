@@ -3571,6 +3571,7 @@ function toggleMetaPopup(e) {
     p.style.display = 'block';
     p.classList.add('show');
     p.style.left = Math.max(12, Math.min(r.left, window.innerWidth - p.getBoundingClientRect().width - 12)) + 'px';
+    p.style.top = Math.max(12, Math.min(r.bottom + 4, window.innerHeight - p.getBoundingClientRect().height - 12)) + 'px';
     bringToFront(p);
     registerOutsideClick('meta-popup', ['#to-me-btn']);
   }
