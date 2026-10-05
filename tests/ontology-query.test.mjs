@@ -5,6 +5,20 @@ import { queryOntology, queryRange } from '../public/ontology-query.mjs';
 const options = { now: new Date('2026-10-04T16:24:00Z'), timeZone: 'Asia/Seoul' };
 const coverage = { mail: { status: 'complete' }, calendar: { status: 'complete' } };
 const mail = (id, props = {}) => ({ id, subject: '[Atlas] Plan ' + id, sender: '김 대표', senderEmail: 'founder@example.com', toHeader: 'Me <me@example.com>', dateISO: '2026-09-30T10:00:00Z', labelIds: ['INBOX', 'UNREAD'], ...props });
+
+test('colloquial question endings preserve the same week and received-mail conditions', () => {
+  const g = buildOntology([mail('current', { dateISO: '2026-10-05T01:00:00Z' }), mail('previous'), mail('sent', { dateISO: '2026-10-05T01:00:00Z', labelIds: ['SENT'] })], [], coverage);
+  const expected = queryOntology(g, '이번주에 온 메일 모두 알려줘', options);
+  for (const ending of ['뭐임', '뭐야?', '뭐예요', '뭐지', '뭐냐']) {
+    const result = queryOntology(g, '이번주에 온 메일 ' + ending, options);
+    assert.equal(result.kind, 'list');
+    assert.equal(result.plan.start, expected.plan.start);
+    assert.equal(result.plan.end, expected.plan.end);
+    assert.equal(result.plan.scope, expected.plan.scope);
+    assert.deepEqual(result.records.map(n => n.id), ['mail:current']);
+  }
+  assert.equal(queryOntology(g, '이번주 계약 관련 조건에 맞는 메일 뭐임', options).kind, 'clarify');
+});
 test('the reported last-week list queries all 123 sources and exposes every result beyond the model sample', () => {
   const g = buildOntology(Array.from({length:123}, (_, i) => mail(String(i))), [], coverage);
   const result = queryOntology(g, '지난주 온 메일 모두 알려줘', options);

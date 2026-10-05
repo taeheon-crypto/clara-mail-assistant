@@ -58,6 +58,9 @@ export function planQuery(question, options = {}) {
     rest = rest.replace(entity[0], '');
   }
   // Consume lookup grammar; any leftover constraint must never silently disappear.
+  // Consume the complete question ending before the generic "뭐" token.
+  // Only terminal endings are grammar; unknown content constraints remain intact.
+  rest = rest.replace(/(?:뭐임|뭐야|뭐예요|뭐지|뭐냐)[?!.\s]*$/, ' ');
   rest = rest.replace(/받은\s*편지함|이메일|메일|편지함|캘린더|일정|미팅|회의|할\s*일|업무|태스크|첨부\s*파일|첨부|문서|emails?|messages?|events?|calendar|meetings?|tasks?|documents?|attachments?/gi, ' ')
     .replace(/몇\s*(?:개|통|건)(?:야|임|인가요|인지|예요|왔어|왔나요|있어|있나요)?|개수|건수|목록|리스트|전체|모든|모두|전부|총|받은|수신한|온|보낸|발신한|보내준|안\s*읽은|읽지\s*않은|미확인|읽은|수신|내|나의|제|알려\s*줘|알려\s*주세요|보여\s*줘|보여\s*주세요|조회해\s*줘|찾아\s*줘|찾아\s*주세요|나열해\s*줘|정리해\s*줘|어떤|뭐|뭔지|있어|있나요|이야|인가요|이랑|하고|관련|에서|동안|것|좀|해줘|unread|the|all|list|show|tell me|how many|did i|get|receive|in my|my|are/gi, ' ')
     .replace(/[은는이가의를과와에?!.\s,]+/g, '');
