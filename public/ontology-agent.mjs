@@ -32,6 +32,30 @@ export function agentResponseFormat(sourceIds = []) {
   answer.properties.citations = { type: 'array', minItems: sources.length ? 1 : 0, maxItems: sources.length ? 12 : 0, items: sources.length ? { enum: sources } : { type: 'string' } };
   return format;
 }
+export function agentTools(sourceIds = []) {
+  const answer = agentResponseFormat(sourceIds).json_schema.schema.properties.decision.anyOf[0];
+  const plan = JSON.parse(JSON.stringify(planSchema));
+  plan.required = ['operation', 'types', 'scope'];
+  const fn = (name, description, parameters) => ({ type: 'function', function: { name, description, parameters } });
+  return [
+    fn('query_ontology', 'Exact full-index mail/calendar lists, counts, relationships and rankings.', object({ plan })),
+    fn('search_evidence', 'Find source passages by meaning expressed as search terms. Read results before semantic judgments.', { ...object({ question: { type: 'string' }, plan }), required: ['question'] }),
+    fn('read_sources', 'Read original mail or calendar sources returned by prior tools.', object({ ids: { type: 'array', minItems: 1, maxItems: 6, items: { type: 'string' } } })),
+    fn('answer', 'Deliver the final answer with exact evidence IDs. General conversation uses no citations.', object({ text: answer.properties.text, citations: answer.properties.citations })),
+    fn('clarify', 'Ask one specific question only when essential information is missing.', object({ text: { type: 'string' } })),
+  ];
+}
+export function agentCompletionText(message) {
+  if (Array.isArray(message?.tool_calls) && message.tool_calls.length) {
+    if (message.tool_calls.length !== 1) return JSON.stringify({ action: 'invalid_parallel_tools' });
+    const call = message.tool_calls[0].function;
+    try {
+      const args = typeof call?.arguments === 'string' ? JSON.parse(call.arguments) : call?.arguments;
+      return JSON.stringify({ decision: ['answer', 'clarify'].includes(call?.name) ? { action: call.name, ...args } : { action: 'tool', name: call?.name, arguments: args } });
+    } catch { return '{}'; }
+  }
+  return message?.content;
+}
 
 export const AGENT_SYSTEM = `You are Clara, an AI agent embedded in the user's mail/calendar application.
 Understand EVERY latest user request using conversation context, including colloquial language, general conversation, follow-up references, comparisons, analysis and drafts. There is no whitelist of question phrases.
