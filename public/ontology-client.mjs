@@ -293,9 +293,27 @@ window.ClaraOntology = {
     };
     let preparing = true;
     const pack = async (records, meta = {}) => {
-      const nodes = records.filter(n => ['Email', 'Event'].includes(n.type)).map(source);
+      let nodes = records.filter(n => ['Email', 'Event'].includes(n.type)).map(source);
+      const sourceCount = new Set(nodes.map(n => n.id)).size;
+      if (preparing && nodes.some(n => n.properties.textIsExcerpt)) return { ...meta, nodes: nodes.slice(0, 40).map(n => ({ ...n, properties: { ...n.properties, text: '' } })), bodiesRead: 0, bodiesNotLoaded: true, nextStep: 'Call get_mail or read_sources to load original bodies, including the rest of long messages.' };
+      if (!preparing) {
+        const expanded = [];
+        for (const n of nodes) {
+          if (n.type !== 'Email' || !n.properties.textIsExcerpt) { expanded.push(n); continue; }
+          let offset = 0;
+          do {
+            const res = await fetch('/api/ontology/sync?' + new URLSearchParams({ source: 'mail_body', id: n.id.slice(5), offset: String(offset) }), { credentials: 'same-origin', signal: AbortSignal.timeout(30000) });
+            const body = await res.json(); current();
+            if (!res.ok || body.id !== n.id || typeof body.text !== 'string') throw new Error('긴 메일의 원문 읽기를 완료하지 못했습니다.');
+            expanded.push({ ...n, properties: { ...n.properties, text: body.text, textIsExcerpt: false, originalBodyPartOffset: offset, originalTotalChars: body.totalChars } });
+            if (body.nextOffset !== null && (!Number.isSafeInteger(body.nextOffset) || body.nextOffset <= offset)) throw new Error('원문 읽기 위치를 확인하지 못했습니다.');
+            offset = body.nextOffset;
+          } while (offset !== null);
+        }
+        nodes = expanded;
+      }
       const batches = evidenceBatches(nodes);
-      if (batches.length <= 1) return { ...meta, nodes, bodiesRead: nodes.length, evidenceIsSample: meta.exhaustive === false };
+      if (batches.length <= 1) return { ...meta, nodes, bodiesRead: sourceCount, evidenceIsSample: meta.exhaustive === false };
       if (preparing) return { ...meta, nodes: nodes.slice(0, 40).map(n => ({ ...n, properties: { ...n.properties, text: '' } })), bodiesRead: 0, bodiesNotLoaded: true, totalSourceCount: nodes.length, nextStep: 'For summaries, priorities, drafts or source-content analysis, call get_mail/get_calendar for this period to read ALL matching bodies in batches. For counts/ranks call rank_correspondents.' };
       // Every matching original body enters a model batch. The final model
       // receives per-source notes instead of silently taking a top-k sample.
@@ -306,7 +324,7 @@ window.ClaraOntology = {
         notes.push(message.content);
       }
       const manifest = nodes.slice(0, 40).map(n => ({ ...n, properties: { ...n.properties, text: '', bodyAnalyzedInBatch: true } }));
-      return { ...meta, nodes: manifest, sourceIds: nodes.slice(0, 1000).map(n => n.id), nodeManifestTruncated: nodes.length > 40, analysis: notes.join('\n\n').slice(0, 40000), analysisIsTruncated: notes.join('\n\n').length > 40000, bodiesRead: nodes.length, evidenceIsSample: meta.exhaustive === false };
+      return { ...meta, nodes: manifest, sourceIds: [...new Set(nodes.map(n => n.id))].slice(0, 1000), nodeManifestTruncated: nodes.length > 40, analysis: notes.join('\n\n').slice(0, 40000), analysisIsTruncated: notes.join('\n\n').length > 40000, bodiesRead: sourceCount, bodyPartsRead: nodes.length, evidenceIsSample: meta.exhaustive === false };
     };
     let lastQuery, lastPlan;
     const execute = async (name, args) => {

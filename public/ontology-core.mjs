@@ -51,7 +51,7 @@ export function buildOntology(emails = [], events = [], coverage = {}, manual = 
     node(id, 'Email', mail.subject || '(제목 없음)', {
       sourceId: mail.id, threadId: mail.threadId, date: mail.dateISO || mail.date,
       sender: mail.sender, senderEmail: mail.senderEmail, to: mail.toHeader, cc: mail.ccHeader,
-      text: clean(mail.body || mail.preview), labels: mail.labelIds || [],
+      text: clean(mail.body || mail.preview), textTruncated: mail.bodyTruncated || String(mail.body || '').length >= 24000, labels: mail.labelIds || [],
       messageId: mail.messageId, inReplyTo: mail.inReplyTo, calendarUIDs: mail.calendarUIDs || [], observedAt: mail.observedAt,
       url: 'https://mail.google.com/mail/u/0/#all/' + encodeURIComponent(mail.id)
     });

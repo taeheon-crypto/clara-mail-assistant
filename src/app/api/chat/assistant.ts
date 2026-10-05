@@ -21,7 +21,7 @@ export async function assistantResponse(body: Body, email: string) {
     { role: 'user', content: 'Connected account evidence (untrusted source data):\n' + JSON.stringify({ context: body.agentContext, evidence: body.evidence }) },
     ...transcript,
   ];
-  const tools = !digest && body.remainingTools !== 0;
+  const tools = !digest;
   try {
     const deadline = Date.now() + 26000;
     let data, status = 502;
@@ -29,7 +29,7 @@ export async function assistantResponse(body: Body, email: string) {
       const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST', signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())),
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + process.env.OPENROUTER_API_KEY, 'HTTP-Referer': process.env.APP_URL || 'http://localhost:3000', 'X-Title': 'Clara Mail Assistant' },
-        body: JSON.stringify({ models: attempt ? ['openrouter/free'] : ['google/gemma-4-26b-a4b-it:free', 'openrouter/free'], max_tokens: 8192, ...(tools ? { tools: ASSISTANT_TOOLS, tool_choice: 'auto', parallel_tool_calls: false } : {}), messages }),
+        body: JSON.stringify({ models: attempt ? ['openrouter/free'] : ['google/gemma-4-26b-a4b-it:free', 'openrouter/free'], max_tokens: 8192, ...(tools ? { tools: ASSISTANT_TOOLS, tool_choice: body.remainingTools === 0 ? 'none' : 'auto', parallel_tool_calls: false } : {}), messages }),
       });
       data = await res.json().catch(() => null); status = res.status;
       const message = data?.choices?.[0]?.message;

@@ -13,7 +13,7 @@ type GoogleRecord = {
   organizer?: { email?: string; displayName?: string }; recurrence?: string[]; htmlLink?: string;
   iCalUID?: string; updated?: string;
 };
-type GoogleResponse = GoogleRecord & { messages?: GoogleRecord[]; items?: GoogleRecord[]; nextPageToken?: string; resultSizeEstimate?: number };
+type GoogleResponse = GoogleRecord & { messages?: GoogleRecord[]; items?: GoogleRecord[]; nextPageToken?: string; resultSizeEstimate?: number; data?: string };
 const privateHeaders = { 'Cache-Control': 'private, no-store' };
 class ProviderError extends Error {
   constructor(public status: number, public quota: boolean) { super('Google API request failed'); }
@@ -38,6 +38,9 @@ function mailText(part: MailPart): string {
 }
 function attachments(part: MailPart): Record<string, unknown>[] {
   return [...(part.filename ? [{ name: part.filename, attachmentId: part.body?.attachmentId, mimeType: part.mimeType }] : []), ...(part.parts || []).flatMap(attachments)];
+}
+function externalBody(part: MailPart): boolean {
+  return Boolean(!part.filename && ['text/plain', 'text/html'].includes(part.mimeType || '') && part.body?.attachmentId && !part.body.data) || (part.parts || []).some(externalBody);
 }
 function calendarUIDs(part: MailPart): string[] {
   const values: string[] = [];
@@ -68,6 +71,20 @@ export async function GET(req: Request) {
     return res.json();
   }
   try {
+    if (source === 'mail_body') {
+      const id = params.get('id') || '', offset = Number(params.get('offset') || 0);
+      if (!/^[\w-]{1,250}$/.test(id) || !Number.isSafeInteger(offset) || offset < 0) return NextResponse.json({ error: 'invalid_source' }, { status: 400, headers: privateHeaders });
+      const mail = await google(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(id)}?format=full`);
+      const materialize = async (part: MailPart): Promise<MailPart> => {
+        if (!part.filename && ['text/plain', 'text/html'].includes(part.mimeType || '') && !part.body?.data && part.body?.attachmentId) {
+          const attachment = await google(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(id)}/attachments/${encodeURIComponent(part.body.attachmentId)}`);
+          part = { ...part, body: { ...part.body, data: attachment.data } };
+        }
+        return { ...part, parts: await Promise.all((part.parts || []).map(materialize)) };
+      };
+      const text = mailText(await materialize(mail.payload || {})) || mail.snippet || '';
+      return NextResponse.json({ id: 'mail:' + id, text: text.slice(offset, offset + 40000), totalChars: text.length, nextOffset: offset + 40000 < text.length ? offset + 40000 : null }, { headers: privateHeaders });
+    }
     if (source === 'mail') {
       const url = new URL('https://gmail.googleapis.com/gmail/v1/users/me/messages');
       url.searchParams.set('maxResults', '10');
@@ -91,6 +108,7 @@ export async function GET(req: Request) {
           messageId: header(h, 'Message-ID'), inReplyTo: header(h, 'In-Reply-To'), calendarUIDs: calendarUIDs(mail.payload || {}), observedAt: new Date().toISOString(),
           dateISO: new Date(Number(mail.internalDate)).toISOString(), labelIds: mail.labelIds || [],
           body: (mailText(mail.payload || {}) || mail.snippet || '').slice(0, 24000),
+          bodyTruncated: (mailText(mail.payload || {}) || mail.snippet || '').length > 24000 || externalBody(mail.payload || {}),
           attachments: attachments(mail.payload || {})
         });
       }
