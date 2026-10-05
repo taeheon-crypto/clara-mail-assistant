@@ -22,6 +22,12 @@ test('UI indexes both sources, stores confirmed links, restores them, and isolat
       if (url === '/api/auth/session') return Response.json({ user: { email } });
       if (url === '/api/chat') {
         const body = JSON.parse(opts.body);
+        if (body.mode === 'ontology_agent') {
+          const trace = body.agentTrace;
+          if (!trace.length) return Response.json({ decision: { action: 'tool', name: 'query_ontology', arguments: { plan: { operation: 'list', types: ['Email'], scope: 'received' } } } });
+          if (trace.length === 1) return Response.json({ decision: { action: 'tool', name: 'read_sources', arguments: { ids: [trace[0].output.nodes[0].id] } } });
+          return Response.json({ decision: { action: 'answer', text: '요청하신 자료를 확인했습니다. [mail:page124]' } });
+        }
         assert.equal(body.mode, 'ontology_plan');
         assert.ok(!body.ontologyContext);
         const question = body.messages.at(-1).content;
@@ -103,6 +109,12 @@ test('UI indexes both sources, stores confirmed links, restores them, and isolat
     assert.match(paged.document.getElementById('ont-status').textContent, /무료 AI 한도/);
     assert.equal(paged.document.querySelectorAll('#ont-list [data-node]').length, 0);
     assert.equal((await paged.ClaraOntology.query('전체 메일 몇개야?')).total, 125);
+    const agent = await paged.ClaraOntology.agent('이번엔 내가 신경써야 하는 게 뭔지 맥락을 보고 판단해봐', { messages: [{ role: 'assistant', content: '지원사업 자료를 확인하겠습니다.' }] });
+    assert.equal(agent.kind, 'answer');
+    assert.deepEqual(agent.trace.map(t => t.name), ['query_ontology', 'read_sources']);
+    assert.equal(agent.trace[0].output.total, 125);
+    assert.equal(agent.trace[0].output.evidenceIsSample, true);
+    assert.match(paged.document.getElementById('ont-page').textContent, /전체 125건/);
 
   } finally {
     globalThis.setTimeout = originalTimeout;
@@ -120,18 +132,19 @@ test('every chat call uses the shared bridge and forwards current source identit
   await sandbox.window._claraChatFetch('/api/chat', { body: JSON.stringify({ messages: [{ role: 'user', content: 'Question' }] }) });
   assert.equal(sent.ontologyContext, 'shared-context');
 });
-test('direct queries bypass AI and failed AI calls show consistent errors or evidence', async () => {
+test('every chat question enters the AI agent, including formerly hard-coded direct queries', async () => {
   let calls = 0;
   const sandbox = { Response, window: { ClaraOntology: {
-    query: async q => q === '지난주 온 메일 모두 알려줘' ? {kind:'list',text:'123건 원본 목록'} : null,
+    query: async () => { throw new Error('Chat must not bypass AI'); },
+    agent: async q => { calls++; return { kind: 'answer', text: q === '지난주 온 메일 모두 알려줘' ? 'AI가 조회한 123건 원본 목록' : 'AI 답변' }; },
     context: async () => 'shared-context',
     fallback: async q => q === '메일 요약해줘' ? {text:'AI 생성 실패 · 원본 근거'} : null
   } }, fetch: async () => { calls++; return Response.json({error:{message:'무료 AI 한도'}},{status:429}); } };
   vm.runInNewContext(await readFile(new URL('../public/ontology-bridge.js', import.meta.url), 'utf8'), sandbox);
   const ask = q => sandbox.window._claraChatFetch('/api/chat', {body:JSON.stringify({messages:[{role:'user',content:q}]})});
   assert.match((await (await ask('지난주 온 메일 모두 알려줘')).json()).content[0].text,/123건/);
-  assert.equal(calls,0);
-  assert.equal((await (await ask('메일 요약해줘')).json()).answerMode,'evidence');
-  await assert.rejects(ask('기타 질문'),/무료 AI 한도/);
-  assert.equal(calls,2);
+  assert.equal(calls,1);
+  assert.equal((await (await ask('메일 요약해줘')).json()).answerMode,'answer');
+  assert.match((await (await ask('기타 질문')).json()).content[0].text, /AI 답변/);
+  assert.equal(calls,3);
 });

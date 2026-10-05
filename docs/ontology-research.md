@@ -2,7 +2,7 @@
 
 ## Problem and implemented behavior
 
-Natural-language contact rankings previously fell through a fixed lookup grammar. Clara now maps questions to a validated read-only plan and executes filters, counts and rankings against the complete indexed account graph. AI chooses the plan; JavaScript computes the result. Partial synchronization is explicitly qualified. A model evidence sample is never an exhaustive query result.
+Natural-language contact rankings previously fell through a fixed lookup grammar. Every chat question now enters an AI-led agent loop: the AI chooses validated query, search and source-reading tools, observes their results, can refine retrieval, and writes the final answer. Exact filters, counts and rankings execute against the complete indexed account graph. General conversation does not require mailbox access. Partial synchronization is explicitly qualified. A model evidence sample is never an exhaustive query result. See ontology-query-planner.md for the agent protocol and limits.
 
 The graph shares email-address identities across Gmail and Calendar. It contains Person, Organization (email domain, not verified employer), Email, Thread, Event, Project, Task and Document. Explicit iCalendar UID links invitation emails to calendar series; Message-ID/In-Reply-To links replies. Similar titles and homonymous display names do not merge records. Calendar response status is retained, organizer/attendee duplicates count once, declined invitations are excluded from contact rankings. Attendance metadata denotes an invitation relationship, not proof of actual attendance.
 

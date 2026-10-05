@@ -1,45 +1,17 @@
-# Shared ontology query planning
+# Clara AI agent and ontology tools
 
-Clara previously returned a generic clarification as soon as a lookup fell outside
-the regular-expression grammar. That prevented the AI from interpreting questions
-such as `나랑 최근에 가장 많이 메일 주고받은 사람 누구임?`.
+Every chat question on all six surfaces now enters `ClaraOntology.agent`. Chat intent is never selected by the fixed phrase parser. The AI reads conversation history, account/index coverage, the server clock and the focused source ID, then returns a validated decision. General conversation can be answered directly; private-data answers use tools and cite their evidence.
 
-All six chat surfaces still use the shared bridge. Known direct lookups run without
-an AI call. Other questions use authenticated `POST /api/chat` with
-`mode: "ontology_plan"`, conversation context and the browser's timezone. The server
-supplies the current local date and the existing free models. It requests a JSON
-plan, not an answer computed from sampled mailbox evidence. Both the server and
-browser validate this read-only plan against `public/ontology-plan.mjs`.
+The browser runs a bounded observe/act loop with three read-only tools:
 
-The browser executes filters over the whole account graph. Supported operations
-are lists, counts, grouping/ranking, filtered analysis and specific clarification.
-Filters combine dates, Gmail scope/read state, people/project relations and literal
-subject/body terms. Multiple entity filters intersect; ambiguous names require an
-email address. Lists support date order and a bounded explicit limit.
+- `query_ontology`: exact filters, counts, rankings and relation paths over the full account graph. The plan is validated on server and client. Calendar ranges request provider-expanded occurrences.
+- `search_evidence`: passage/graph retrieval, optionally restricted by an exact plan. Semantic judgments are made by the AI after reading evidence, rather than rejected by the question grammar. Retrieval is sampled and cannot prove exhaustive semantic counts or absence.
+- `read_sources`: reads up to six retrieved, focused or previously cited sources from the current account; text is bounded and truncation is explicit.
 
-Aggregation supports people, email domains, projects, dates, months and source
-types. Person/domain aggregation is currently email-only. It uses explicit sender,
-To and CC edges; excludes the account address, observed SENT aliases and drafts;
-deduplicates each message per counterpart; separates sent/received counts; and
-retains all source IDs locally. A message with several recipients contributes to
-each recipient, so group counts are not additive mailbox counts. Equal cutoff
-counts are shown as ties, with at most 50 rows in chat. Source records remain
-paginated in the knowledge panel.
+The AI sees tool results and can refine the next lookup. It synthesizes the final answer, or asks a specific clarification when identity/information is genuinely missing. At most six tools execute per turn, with bounded provider inputs. Tool errors return to the AI for recovery; account changes interrupt execution. Source facts must cite returned mail/event IDs. Unknown and mutation tools are rejected. The local knowledge panel retains all exact-query matches beyond the AI evidence sample.
 
-Bare “recent” defaults to 30 local calendar days including today, with this
-assumption displayed. Explicit dates override it. Filtered analysis queries pass
-the exact matched count and a bounded evidence sample to the answer model. Existing
-coverage, freshness, calendar-occurrence expansion and citation checks remain.
+The fixed parser remains only as a utility for direct knowledge-panel queries and failure fallback. It does not decide whether a chat question is acceptable. Existing `ontology_plan` API behavior remains compatible.
 
-Plans cannot execute JavaScript/SQL, send/delete mail, mutate calendars, claim
-attachment-content analysis, infer verified employers or invent task completion.
-Unsupported semantics must ask a specific question. This is a bounded query
-language, not proof that an AI will interpret every question correctly. Model
-planning still depends on the free provider's availability. On failure the app
-reports that no query was executed; direct queries remain available. Real Google
-accounts and live provider interpretations require separate verification.
+These tools cannot send/delete mail or mutate calendars. Clara can interpret such requests and draft text, but must state that execution is unavailable instead of claiming success. Attachment content and body text beyond existing synchronization limits are not available. Every chat now depends on an AI provider; free-model quota/availability may prevent a response. This architecture accepts arbitrary language but does not guarantee perfect interpretation or factual accuracy.
 
-Validation: `npm test`, targeted ESLint, `npx tsc --noEmit`, and the Next production
-build. Tests cover full-index ranking beyond 50/60-source samples, recipients and
-aliases, ties, homonyms, combined filters, unsupported plans, API authorization,
-provider limits and knowledge-panel pagination.
+Verification covers the complete mocked AI→query→read→answer flow in the actual client, arbitrary conversational wording, general replies without unnecessary tools, follow-up context, exact full-index counts, source sampling, unsafe tool rejection, invalid citations, account isolation, failure recovery and loop/input bounds. Live Google/OpenRouter answers still require real-account verification.

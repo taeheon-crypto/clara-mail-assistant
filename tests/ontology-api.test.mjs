@@ -4,12 +4,13 @@ import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import ts from 'typescript';
 import { PLANNER_SYSTEM, validatePlan } from '../public/ontology-plan.mjs';
+import { AGENT_SYSTEM, validateDecision } from '../public/ontology-agent.mjs';
 
 async function route(path, { session = { user: { email: 'me@example.com' }, accessToken: 'test-token' }, fetch: fetchStub = () => { throw new Error('Unexpected network call'); } } = {}) {
   const source = await readFile(new URL('../src/app/api/' + path + '/route.ts', import.meta.url), 'utf8');
   const js = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   const exports = {};
-  vm.runInNewContext(js, { exports, console: { warn() {} }, require(name) { if (name === '@/auth') return { auth: async () => session }; if (name === 'next/server') return { NextResponse: { json: Response.json } }; if (name.endsWith('/ontology-plan.mjs')) return { PLANNER_SYSTEM, validatePlan }; throw new Error(name); }, fetch: fetchStub, URL, Buffer, AbortSignal, Request, Response, process: { env: { OPENROUTER_API_KEY: 'test-key' } } });
+  vm.runInNewContext(js, { exports, console: { warn() {} }, require(name) { if (name === '@/auth') return { auth: async () => session }; if (name === 'next/server') return { NextResponse: { json: Response.json } }; if (name.endsWith('/ontology-plan.mjs')) return { PLANNER_SYSTEM, validatePlan }; if (name.endsWith('/ontology-agent.mjs')) return { AGENT_SYSTEM, validateDecision }; throw new Error(name); }, fetch: fetchStub, URL, Buffer, AbortSignal, Request, Response, process: { env: { OPENROUTER_API_KEY: 'test-key' } } });
   return exports;
 }
 test('sync endpoints reject unauthenticated calls without contacting Google', async () => {
@@ -109,6 +110,27 @@ test('another account context is rejected before provider access', async () => {
   const r = await route('chat');
   const res = await r.POST(new Request('https://clara.test/api/chat', { method: 'POST', body: JSON.stringify({ messages: [{ role: 'user', content: 'Question' }], ontologyContext: JSON.stringify({ accountEmail: 'other@example.com', nodes: [], coverage: {}, counts: {} }) }) }));
   assert.equal(res.status, 403);
+});
+
+test('agent accepts arbitrary conversational intent and returns a validated tool decision', async () => {
+  let sent;
+  const r = await route('chat', { fetch: async (_url, opts) => { sent = JSON.parse(opts.body); return Response.json({ choices: [{ message: { content: JSON.stringify({ action: 'tool', name: 'search_evidence', arguments: { question: '사업계획서 제출 마감' } }) } }] }); } });
+  const res = await r.POST(new Request('https://clara.test/api/chat', { method: 'POST', body: JSON.stringify({ mode: 'ontology_agent', remainingTools: 6, agentContext: { accountEmail: 'me@example.com', timeZone: 'Asia/Seoul' }, agentTrace: [], messages: [{ role: 'user', content: '이번엔 내가 신경써야 하는 게 뭔지 맥락을 보고 판단해봐' }] }) }));
+  assert.equal(res.status, 200);
+  assert.equal((await res.json()).decision.name, 'search_evidence');
+  assert.match(sent.messages[0].content, /There is no whitelist/);
+  assert.match(sent.messages[1].content, /Agent clock/);
+});
+
+test('agent final citations must belong to tool evidence and unsafe tools are rejected', async () => {
+  const request = (trace = [], email = 'me@example.com') => new Request('https://clara.test/api/chat', { method: 'POST', body: JSON.stringify({ mode: 'ontology_agent', remainingTools: 3, agentContext: { accountEmail: email, timeZone: 'Asia/Seoul' }, agentTrace: trace, messages: [{ role: 'user', content: 'Question' }] }) });
+  for (const decision of [{ action: 'answer', text: 'Invented [mail:nope]' }, { action: 'answer', text: 'Uncited mailbox claim' }, { action: 'tool', name: 'delete_mail', arguments: { ids: ['mail:m1'] } }]) {
+    const r = await route('chat', { fetch: async () => Response.json({ choices: [{ message: { content: JSON.stringify(decision) } }] }) });
+    assert.equal((await r.POST(request([{ output: { nodes: [{ id: 'mail:m1' }] } }]))).status, 502);
+  }
+  assert.equal((await (await route('chat')).POST(request([], 'other@example.com'))).status, 403);
+  const r = await route('chat', { fetch: async () => Response.json({ choices: [{ message: { content: JSON.stringify({ action: 'answer', text: 'Grounded [mail:m1]' }) } }] }) });
+  assert.equal((await r.POST(request([{ output: { nodes: [{ id: 'mail:m1' }] } }]))).status, 200);
 });
 
 test('citations outside the filtered source set are rejected even when present as relationship context', async () => {

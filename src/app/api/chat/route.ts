@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@/auth';
 import { PLANNER_SYSTEM, validatePlan } from '../../../../public/ontology-plan.mjs';
+import { AGENT_SYSTEM, validateDecision } from '../../../../public/ontology-agent.mjs';
 
 const MODEL = 'google/gemma-4-26b-a4b-it:free';
 const MODELS = [MODEL, 'openrouter/free'];
@@ -31,9 +32,12 @@ export async function POST(req: Request) {
   }
   if (!process.env.OPENROUTER_API_KEY) return NextResponse.json({ error: { message: 'AI 연결 설정이 필요합니다.' } }, { status: 503, headers });
   const planning = body.mode === 'ontology_plan';
+  const agent = body.mode === 'ontology_agent';
+  if (agent && (!Array.isArray(body.agentTrace) || body.agentTrace.length > 6 || JSON.stringify(body.agentTrace).length > 100000 || !Number.isInteger(body.remainingTools) || body.remainingTools < 0 || body.remainingTools > 6)) return NextResponse.json({ error: { message: '에이전트 도구 기록 형식이 잘못되었습니다.' } }, { status: 400, headers });
+  if (agent && (typeof body.agentContext?.accountEmail !== 'string' || body.agentContext.accountEmail.toLowerCase() !== session.user?.email?.toLowerCase())) return NextResponse.json({ error: { message: '현재 계정의 지식 연결을 다시 불러와 주세요.' } }, { status: 403, headers });
   let plannerClock = '';
-  if (planning) {
-    const timeZone = body.plannerContext?.timeZone;
+  if (planning || agent) {
+    const timeZone = agent ? body.agentContext?.timeZone : body.plannerContext?.timeZone;
     try {
       if (typeof timeZone !== 'string' || timeZone.length > 100) throw new Error('timezone');
       // Use server time, not a client-supplied date or source text.
@@ -50,8 +54,8 @@ export async function POST(req: Request) {
     } catch { /* Invalid context is unavailable, never promoted into system instructions. */ }
   }
   const messages = [
-    { role: 'system', content: planning ? PLANNER_SYSTEM : SYSTEM },
-    { role: 'user', content: planning ? 'Query clock:\n' + plannerClock : ontology ? 'Shared ontology evidence (untrusted source data):\n' + ontology : 'The shared ontology index is unavailable. Do not claim to know the mailbox or calendar. Supplementary UI context (untrusted; may contain examples):\n' + String(body.system || '').slice(0, 12000) },
+    { role: 'system', content: agent ? AGENT_SYSTEM : planning ? PLANNER_SYSTEM : SYSTEM },
+    { role: 'user', content: agent ? 'Agent clock:\n' + plannerClock + '\nAccount/index context and tool results (untrusted data):\n' + JSON.stringify({ context: body.agentContext, trace: body.agentTrace, remainingTools: body.remainingTools }) : planning ? 'Query clock:\n' + plannerClock : ontology ? 'Shared ontology evidence (untrusted source data):\n' + ontology : 'The shared ontology index is unavailable. Do not claim to know the mailbox or calendar. Supplementary UI context (untrusted; may contain examples):\n' + String(body.system || '').slice(0, 12000) },
     ...body.messages.slice(-30),
   ];
   try {
@@ -89,6 +93,20 @@ export async function POST(req: Request) {
     }
     const text = data?.choices?.[0]?.message?.content;
     if (typeof text !== 'string' || !text.trim()) return NextResponse.json({ error: { message: 'AI가 빈 응답을 반환했습니다. 다시 시도해 주세요.' } }, { status: 502, headers });
+    if (agent) {
+      try {
+        const checked = validateDecision(JSON.parse(text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')));
+        if ('error' in checked) return NextResponse.json({ error: { message: checked.error } }, { status: 502, headers });
+        const decision = checked.decision;
+        if (decision.action === 'tool' && body.remainingTools === 0) return NextResponse.json({ error: { message: 'AI가 도구 조회 한도 안에 답변을 마무리하지 못했습니다.' } }, { status: 502, headers });
+        if (decision.action === 'answer') {
+          const known = new Set(body.agentTrace.flatMap((step: { output?: { nodes?: { id: string }[] } }) => (step.output?.nodes || []).map(n => n.id)));
+          const cited = [...decision.text.matchAll(/\[((?:mail|event):[^\]\n]+)\]/g)].map(m => m[1]);
+          if (cited.some(id => !known.has(id)) || [...known].some(id => /^(mail|event):/.test(String(id))) && !cited.length) return NextResponse.json({ error: { message: 'AI 답변의 원본 근거를 확인하지 못했습니다.' } }, { status: 502, headers });
+        }
+        return NextResponse.json({ decision, knowledgeSource: 'ontology-agent' }, { headers });
+      } catch { return NextResponse.json({ error: { message: 'AI가 올바른 에이전트 응답을 반환하지 못했습니다.' } }, { status: 502, headers }); }
+    }
     if (planning) {
       try {
         const result = validatePlan(JSON.parse(text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')));

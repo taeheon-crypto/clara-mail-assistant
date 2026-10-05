@@ -1,6 +1,8 @@
 import { buildOntology, searchOntology, ontologyContext, exportOntology, TYPES } from './ontology-core.mjs';
 import { queryOntology, planQuery, rangeKey, resolvePlan } from './ontology-query.mjs';
 import { validatePlan } from './ontology-plan.mjs';
+import { runAgent } from './ontology-agent.mjs';
+import { retrieveEvidence } from './ontology-retrieval.mjs';
 
 const emptyState = () => ({ version: 1, emails: {}, events: {}, calendars: [], manual: { nodes: [], edges: [] }, sync: { mail: { status: 'idle', cursor: null }, calendar: { status: 'idle', index: 0, cursor: null, listCursor: null, listed: false } } });
 let state = emptyState(), graph = buildOntology(), account = '', db, running = false, paused = false, selectedId = '', query = '', filter = '', statusText = '', persistence = true, queued = false;
@@ -218,7 +220,9 @@ function render() {
   if (!dialog.open) return;
   if (queryResult?.plan) {
     const fallbackMessage = queryResult.fallbackMessage;
-    queryResult = queryOntology(graph, queryQuestion, { now: queryAt, timeZone: queryResult.plan.timeZone, accountEmail: account, plan: plannedQueries.get(queryQuestion), allowReason: Boolean(fallbackMessage) });
+    const agentQuery = queryResult.agentQuery;
+    queryResult = queryOntology(graph, queryQuestion, { now: queryAt, timeZone: queryResult.plan.timeZone, accountEmail: account, plan: plannedQueries.get(queryQuestion), allowReason: Boolean(fallbackMessage || agentQuery) });
+    if (agentQuery && queryResult) queryResult.agentQuery = true;
     if (fallbackMessage && queryResult) { queryResult.fallbackMessage = fallbackMessage; queryResult.text = fallbackMessage + '\n\n' + queryResult.text; }
   }
   const visible = query ? searchOntology(graph, query, graph.nodes.length) : graph.nodes;
@@ -255,6 +259,72 @@ function render() {
 }
 window.ClaraOntology = {
   ready, open, refresh, sourceChanged,
+  async agent(question, { messages = [], focusId } = {}) {
+    await ready;
+    if (!account) return { kind: 'clarify', text: 'Google 로그인 후 Clara AI를 사용할 수 있습니다.' };
+    const agentAccount = account, agentState = state, now = new Date();
+    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Seoul';
+    const current = () => { if (account !== agentAccount || state !== agentState) throw new Error('계정이나 자료가 변경되었습니다. 같은 질문을 다시 보내 주세요.'); };
+    const sourceIds = new Set();
+    let lastQuery, lastQueryPlan;
+    const snapshot = nodes => nodes.map(n => {
+      const text = String(n.properties.text || '');
+      if (['Email', 'Event'].includes(n.type)) sourceIds.add(n.id);
+      if (['Task', 'Document'].includes(n.type)) for (const id of n.provenance.sourceIds) if (['Email', 'Event'].includes(graph.byId.get(id)?.type)) sourceIds.add(id);
+      return { ...n, provenance: { ...n.provenance, sourceIds: n.provenance.sourceIds.slice(0, 6) }, properties: { ...n.properties, text: text.slice(0, 900), textIsExcerpt: text.length > 900 } };
+    });
+    const history = messages.slice(-10).filter(m => ['user', 'assistant'].includes(m?.role) && typeof m.content === 'string').map(m => ({ role: m.role, content: m.content.slice(0, 12000) }));
+    if (history.at(-1)?.role !== 'user' || history.at(-1)?.content !== question) history.push({ role: 'user', content: question });
+    // Follow-up questions may read sources cited earlier in this conversation.
+    for (const message of history) for (const match of message.content.matchAll(/\[((?:mail|event):[^\]\n]+)\]/g)) if (graph.byId.has(match[1])) sourceIds.add(match[1]);
+    const result = await runAgent({
+      context: { accountEmail: account, timeZone, focusId, coverage: { mail: { status: state.sync.mail.status, indexed: Object.keys(state.emails).length }, calendar: { status: state.sync.calendar.status, indexed: Object.keys(state.events).length } } },
+      decide: async ({ context, trace, remainingTools }) => {
+        current();
+        const res = await fetch('/api/chat', { method: 'POST', credentials: 'same-origin', signal: AbortSignal.timeout(30000), headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'ontology_agent', agentContext: context, agentTrace: trace, remainingTools, messages: history, max_tokens: 4096 }) });
+        const data = await res.json(); current();
+        if (!res.ok) throw new Error(data.error?.message || 'Clara AI 연결에 실패했습니다.');
+        return data.decision;
+      },
+      execute: async (name, args) => {
+        current();
+        if (name === 'read_sources') {
+          // The focused mail is also an explicit user-selected source.
+          if (focusId && graph.byId.has(focusId)) sourceIds.add(focusId);
+          if (args.ids.some(id => !sourceIds.has(id))) throw new Error('먼저 검색하거나 선택한 원본만 읽을 수 있습니다.');
+          return { nodes: args.ids.map(id => {
+            const n = graph.byId.get(id); if (!n) throw new Error('원본이 현재 인덱스에 없습니다.');
+            const text = String(n.properties.text || '');
+            return { ...snapshot([n])[0], properties: { ...n.properties, text: text.slice(0, 9000), textIsExcerpt: text.length > 9000 } };
+          }) };
+        }
+        let selected;
+        if (args.plan) {
+          await loadOccurrences(resolvePlan('', { now, timeZone, plan: args.plan })); current();
+          selected = queryOntology(graph, '', { now, timeZone, accountEmail: account, plan: args.plan, allowReason: true });
+          if (selected?.kind === 'clarify') return { clarification: selected.text, nodes: [] };
+        }
+        if (name === 'query_ontology') {
+          lastQuery = selected; lastQueryPlan = args.plan;
+          // Execute only the AI's plan; no phrase parser chooses chat intent.
+          const nodes = snapshot(selected?.records?.slice(0, 24) || []);
+          for (const n of [...nodes]) if (['Task', 'Document'].includes(n.type)) for (const id of n.provenance.sourceIds) if (!nodes.some(s => s.id === id) && graph.byId.has(id) && nodes.length < 30) nodes.push(...snapshot([graph.byId.get(id)]));
+          for (const group of selected?.groups?.slice(0, 20) || []) for (const id of group.sourceIds.slice(0, 2)) if (!nodes.some(n => n.id === id) && graph.byId.has(id) && nodes.length < 30) nodes.push(...snapshot([graph.byId.get(id)]));
+          return { kind: selected?.kind, total: selected?.total, matchedTotal: selected?.matchedTotal, complete: selected?.complete, summary: selected?.text?.slice(0, 16000), groups: selected?.groups?.slice(0, 20).map(g => ({ ...g, sourceIds: g.sourceIds.slice(0, 2) })), nodes, evidenceIsSample: (selected?.records?.length || 0) > nodes.length };
+        }
+        const found = retrieveEvidence(graph, args.question, { focusId, limit: 24, allowedSourceIds: selected ? new Set(selected.records.map(n => n.id)) : undefined });
+        const nodes = snapshot(found.nodes);
+        return { nodes, passages: found.passages, relations: found.relations.slice(0, 35).map(e => ({ from: e.from, relation: e.relation, to: e.to, inferred: e.inferred, evidence: e.evidence.slice(0, 3) })), exhaustive: false, complete: selected?.complete, matchedTotal: selected?.total, method: found.method };
+      },
+    });
+    current();
+    if (lastQuery) {
+      queryResult = { ...lastQuery, agentQuery: true }; queryQuestion = ''; queryAt = now;
+      plannedQueries.set('', lastQueryPlan); resultView = true; listPage = 0;
+      document.getElementById('ont-question').value = question; render();
+    }
+    return result;
+  },
   async query(question, { messages = [] } = {}) {
     await ready;
     if (!account) return { kind: 'clarify', text: 'Google 로그인 후 지식 연결을 사용할 수 있습니다.' };
