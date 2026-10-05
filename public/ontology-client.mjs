@@ -1,14 +1,17 @@
-import { buildOntology, searchOntology, ontologyContext, TYPES } from './ontology-core.mjs';
-import { queryOntology, planQuery, rangeKey } from './ontology-query.mjs';
+import { buildOntology, searchOntology, ontologyContext, exportOntology, TYPES } from './ontology-core.mjs';
+import { queryOntology, planQuery, rangeKey, resolvePlan } from './ontology-query.mjs';
+import { validatePlan } from './ontology-plan.mjs';
 
 const emptyState = () => ({ version: 1, emails: {}, events: {}, calendars: [], manual: { nodes: [], edges: [] }, sync: { mail: { status: 'idle', cursor: null }, calendar: { status: 'idle', index: 0, cursor: null, listCursor: null, listed: false } } });
 let state = emptyState(), graph = buildOntology(), account = '', db, running = false, paused = false, selectedId = '', query = '', filter = '', statusText = '', persistence = true, queued = false;
 let queryResult = null, queryQuestion = '', queryAt, listPage = 0, resultView = false;
+const plannedQueries = new Map();
 let resolveReady;
 const ready = new Promise(resolve => { resolveReady = resolve; });
 const escape = value => String(value || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 const coverage = () => ({
+  accountEmail: account,
   mail: { ...state.sync.mail, indexed: Object.keys(state.emails).length, scope: 'All Gmail messages, including sent, archived, spam and trash' },
   calendar: { ...state.sync.calendar, indexed: Object.keys(state.events).length, calendars: state.calendars.length, scope: 'All stored events and recurring series; series are not expanded into future occurrences' },
   persistence: persistence ? 'Account-scoped IndexedDB on this browser; no cross-device sync' : 'Memory only: browser storage unavailable'
@@ -215,7 +218,7 @@ function render() {
   if (!dialog.open) return;
   if (queryResult?.plan) {
     const fallbackMessage = queryResult.fallbackMessage;
-    queryResult = queryOntology(graph, queryQuestion, { now: queryAt, timeZone: queryResult.plan.timeZone, allowReason: Boolean(fallbackMessage) });
+    queryResult = queryOntology(graph, queryQuestion, { now: queryAt, timeZone: queryResult.plan.timeZone, accountEmail: account, plan: plannedQueries.get(queryQuestion), allowReason: Boolean(fallbackMessage) });
     if (fallbackMessage && queryResult) { queryResult.fallbackMessage = fallbackMessage; queryResult.text = fallbackMessage + '\n\n' + queryResult.text; }
   }
   const visible = query ? searchOntology(graph, query, graph.nodes.length) : graph.nodes;
@@ -252,26 +255,58 @@ function render() {
 }
 window.ClaraOntology = {
   ready, open, refresh, sourceChanged,
-  async query(question) {
+  async query(question, { messages = [] } = {}) {
     await ready;
     if (!account) return { kind: 'clarify', text: 'Google 로그인 후 지식 연결을 사용할 수 있습니다.' };
     const now = new Date(), timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Seoul';
-    await loadOccurrences(planQuery(question, { now, timeZone }));
-    const result = queryOntology(graph, question, { now, timeZone });
-    if (result) { queryResult = result; queryQuestion = question; queryAt = now; listPage = 0; resultView = true; document.getElementById('ont-question').value = question; render(); }
-    return result;
+    plannedQueries.delete(question);
+    const publish = result => {
+      if (result) { queryResult = result; queryQuestion = question; queryAt = now; listPage = 0; resultView = true; document.getElementById('ont-question').value = question; render(); }
+      return result;
+    };
+    const queryAccount = account, queryState = state;
+    const heuristic = planQuery(question, { now, timeZone });
+    let plan;
+    if (!heuristic || heuristic.kind === 'clarify' || heuristic.kind === 'reason' && heuristic.unsupported) {
+      try {
+        const history = messages.slice(-10).filter(m => ['user', 'assistant'].includes(m?.role) && typeof m.content === 'string').map(m => ({ role: m.role, content: m.content.slice(0, 12000) }));
+        if (history.at(-1)?.role !== 'user' || history.at(-1)?.content !== question) history.push({ role: 'user', content: question });
+        const res = await fetch('/api/chat', { method: 'POST', credentials: 'same-origin', signal: AbortSignal.timeout(30000), headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'ontology_plan', plannerContext: { timeZone }, messages: history, max_tokens: 2048 }) });
+        const data = await res.json();
+        if (!res.ok) return publish({ kind: 'clarify', text: (data.error?.message || '질문 해석에 실패했습니다.') + '\n조회 계획을 만들지 못해 메일 집계를 실행하지 않았습니다.' });
+        const validated = validatePlan(data.plan);
+        if (validated.error) return publish({ kind: 'clarify', text: validated.error });
+        plan = validated.plan;
+      } catch { return publish({ kind: 'clarify', text: 'AI 질문 해석 연결에 실패했습니다. 잠시 후 다시 질문해 주세요. 메일 목록·개수·날짜의 직접 조회는 계속 사용할 수 있습니다.' }); }
+      // Do not execute a plan against a different account/snapshot after awaiting AI.
+      if (account !== queryAccount || state !== queryState) return { kind: 'clarify', text: '계정이나 자료가 변경되었습니다. 같은 질문을 다시 해 주세요.' };
+      plannedQueries.set(question, plan);
+      if (plannedQueries.size > 20) plannedQueries.delete(plannedQueries.keys().next().value);
+    }
+    const effective = resolvePlan(question, { now, timeZone, plan });
+    await loadOccurrences(effective);
+    if (account !== queryAccount || state !== queryState) return { kind: 'clarify', text: '계정이나 자료가 변경되었습니다. 같은 질문을 다시 해 주세요.' };
+    // Resolve ambiguous identities before allowing reason plans to reach the model.
+    if (effective?.kind === 'reason' && plan) {
+      const check = queryOntology(graph, question, { now, timeZone, accountEmail: account, plan, allowReason: true });
+      if (check?.kind === 'clarify') return publish(check);
+    }
+    const result = queryOntology(graph, question, { now, timeZone, accountEmail: account, plan });
+    return publish(result);
   },
   async fallback(question, failure) {
     await ready; if (!account) return null;
     const now = new Date(), timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Seoul';
-    const result = queryOntology(graph, question, { now, timeZone, allowReason: true });
+    const result = queryOntology(graph, question, { now, timeZone, accountEmail: account, plan: plannedQueries.get(question), allowReason: true });
     if (!result || result.kind === 'clarify' || !result.records?.length) return null;
     result.fallbackMessage = failure + '\nAI 분석을 생성하지 못해 조회 가능한 원본 근거 목록을 대신 표시합니다. 내용 요약이나 중요도 판단은 포함하지 않았습니다.';
     result.text = result.fallbackMessage + '\n\n' + result.text;
     queryResult = result; queryQuestion = question; queryAt = now; listPage = 0; resultView = true; document.getElementById('ont-question').value = question; render();
     return result;
   },
-  async context(question, focusId) { await ready; return account ? ontologyContext(graph, question, { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Seoul', focusId }) : undefined; },
+  async context(question, focusId) { await ready; return account ? ontologyContext(graph, question, { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Seoul', focusId, plan: plannedQueries.get(question) }) : undefined; },
+  async export(scope) { await ready; if (!account) throw new Error('로그인이 필요합니다.'); return exportOntology(graph, scope); },
+  async quality() { await ready; return { version: graph.version, ...graph.validation }; },
   async openMail(gmailId) { await ready; open('mail:' + gmailId); },
   async openEvent(calendarId, eventId) { await ready; open('event:' + calendarId + ':' + eventId); }
 };

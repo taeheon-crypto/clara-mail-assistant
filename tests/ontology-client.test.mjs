@@ -17,9 +17,17 @@ test('UI indexes both sources, stores confirmed links, restores them, and isolat
     globalThis.indexedDB = indexedDB;
     globalThis.prompt = () => 'Atlas';
     globalThis.setTimeout = (cb, ms, ...args) => originalTimeout(cb, Math.min(ms || 0, 1), ...args);
-    globalThis.fetch = async url => {
+    globalThis.fetch = async (url, opts) => {
       requests++;
       if (url === '/api/auth/session') return Response.json({ user: { email } });
+      if (url === '/api/chat') {
+        const body = JSON.parse(opts.body);
+        assert.equal(body.mode, 'ontology_plan');
+        assert.ok(!body.ontologyContext);
+        const question = body.messages.at(-1).content;
+        if (question === '모델 한도 테스트') return Response.json({ error: { message: '무료 AI 한도' } }, { status: 429 });
+        return Response.json({ plan: { operation: 'aggregate', types: ['Email'], scope: 'all', groupBy: 'person', direction: 'exchanged', order: 'desc', limit: 1 } });
+      }
       const source = new URL(url, 'https://clara.test').searchParams.get('source');
       const empty = email === 'other@example.com';
       const paged = email === 'pages@example.com';
@@ -80,6 +88,21 @@ test('UI indexes both sources, stores confirmed links, restores them, and isolat
     const resumedCalendar = await paged.ClaraOntology.query('2026-10-06 일정 목록');
     assert.equal(resumedCalendar.complete,true); assert.equal(resumedCalendar.total,2);
     assert.match(resumedCalendar.text,/Google에서 이 기간의 반복 일정/);
+
+    const rank = await paged.ClaraOntology.query('나랑 최근에 가장 많이 메일 주고받은 사람 누구임?');
+    assert.equal(rank.kind, 'aggregate'); assert.equal(rank.groups[0].count, 125);
+    assert.equal(rank.groups[0].email, 'founder@example.com');
+    assert.equal(paged.document.querySelectorAll('#ont-list [data-node]').length, 50);
+    paged.document.getElementById('ont-next').click();
+    paged.document.getElementById('ont-next').click();
+    assert.equal(paged.document.querySelectorAll('#ont-list [data-node]').length, 25);
+    assert.match(paged.document.getElementById('ont-status').textContent, /125/);
+    const limited = await paged.ClaraOntology.query('모델 한도 테스트');
+    assert.match(limited.text, /무료 AI 한도/);
+    assert.match(limited.text, /집계를 실행하지 않았습니다/);
+    assert.match(paged.document.getElementById('ont-status').textContent, /무료 AI 한도/);
+    assert.equal(paged.document.querySelectorAll('#ont-list [data-node]').length, 0);
+    assert.equal((await paged.ClaraOntology.query('전체 메일 몇개야?')).total, 125);
 
   } finally {
     globalThis.setTimeout = originalTimeout;

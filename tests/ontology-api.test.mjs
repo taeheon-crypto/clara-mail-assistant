@@ -3,12 +3,13 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import ts from 'typescript';
+import { PLANNER_SYSTEM, validatePlan } from '../public/ontology-plan.mjs';
 
 async function route(path, { session = { user: { email: 'me@example.com' }, accessToken: 'test-token' }, fetch: fetchStub = () => { throw new Error('Unexpected network call'); } } = {}) {
   const source = await readFile(new URL('../src/app/api/' + path + '/route.ts', import.meta.url), 'utf8');
   const js = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   const exports = {};
-  vm.runInNewContext(js, { exports, console: { warn() {} }, require(name) { if (name === '@/auth') return { auth: async () => session }; if (name === 'next/server') return { NextResponse: { json: Response.json } }; throw new Error(name); }, fetch: fetchStub, URL, Buffer, AbortSignal, Request, Response, process: { env: { OPENROUTER_API_KEY: 'test-key' } } });
+  vm.runInNewContext(js, { exports, console: { warn() {} }, require(name) { if (name === '@/auth') return { auth: async () => session }; if (name === 'next/server') return { NextResponse: { json: Response.json } }; if (name.endsWith('/ontology-plan.mjs')) return { PLANNER_SYSTEM, validatePlan }; throw new Error(name); }, fetch: fetchStub, URL, Buffer, AbortSignal, Request, Response, process: { env: { OPENROUTER_API_KEY: 'test-key' } } });
   return exports;
 }
 test('sync endpoints reject unauthenticated calls without contacting Google', async () => {
@@ -102,4 +103,50 @@ test('invented source IDs are rejected instead of displayed as evidence', async 
   const r = await route('chat',{fetch:async()=>Response.json({choices:[{message:{content:'Answer [mail:invented]'}}]})});
   const res = await r.POST(new Request('https://clara.test/api/chat',{method:'POST',body:JSON.stringify({messages:[{role:'user',content:'Question'}],ontologyContext:JSON.stringify({nodes:[{id:'mail:real'}],coverage:{},counts:{}})})}));
   assert.equal(res.status,502); assert.match((await res.json()).error.message,/원본 근거/);
+});
+
+test('another account context is rejected before provider access', async () => {
+  const r = await route('chat');
+  const res = await r.POST(new Request('https://clara.test/api/chat', { method: 'POST', body: JSON.stringify({ messages: [{ role: 'user', content: 'Question' }], ontologyContext: JSON.stringify({ accountEmail: 'other@example.com', nodes: [], coverage: {}, counts: {} }) }) }));
+  assert.equal(res.status, 403);
+});
+
+test('citations outside the filtered source set are rejected even when present as relationship context', async () => {
+  const r = await route('chat', { fetch: async () => Response.json({ choices: [{ message: { content: 'Answer [mail:outside]' } }] }) });
+  const res = await r.POST(new Request('https://clara.test/api/chat', { method: 'POST', body: JSON.stringify({ messages: [{ role: 'user', content: 'Question' }], ontologyContext: JSON.stringify({ nodes: [{ id: 'mail:inside' }, { id: 'mail:outside' }], coverage: {}, counts: {}, sourceQuery: { matchedSourceIds: ['mail:inside'] } }) }) }));
+  assert.equal(res.status, 502);
+});
+
+test('inline calendar MIME preserves folded UID and reply metadata', async () => {
+  let call = 0;
+  const r = await route('ontology/sync', { fetch: async () => Response.json(++call === 1 ? { messages: [{ id: 'invite' }] } : { id: 'invite', internalDate: '1791154800000', payload: { headers: [{ name: 'Message-ID', value: '<invite>' }, { name: 'In-Reply-To', value: '<parent>' }], mimeType: 'text/calendar', body: { data: Buffer.from('BEGIN:VCALENDAR\r\nUID:very-long-\r\n identifier\r\nEND:VCALENDAR\r\n').toString('base64url') } } }) });
+  const data = await (await r.GET(new Request('https://clara.test/api/ontology/sync?source=mail'))).json();
+  assert.deepEqual(data.records[0].calendarUIDs, ['very-long-identifier']);
+  assert.equal(data.records[0].messageId, '<invite>');
+  assert.equal(data.records[0].inReplyTo, '<parent>');
+});
+
+test('AI plans natural language over the shared read-only schema without receiving mailbox bodies', async () => {
+  let sent;
+  const plan = { operation: 'aggregate', types: ['Email'], scope: 'all', groupBy: 'person', direction: 'exchanged', limit: 1 };
+  const r = await route('chat', { fetch: async (_url, opts) => { sent = JSON.parse(opts.body); return Response.json({ choices: [{ message: { content: JSON.stringify(plan) } }] }); } });
+  const res = await r.POST(new Request('https://clara.test/api/chat', { method: 'POST', body: JSON.stringify({ mode: 'ontology_plan', plannerContext: { timeZone: 'Asia/Seoul', today: '1900-01-01' }, system: 'PRIVATE MAIL BODY', ontologyContext: JSON.stringify({ nodes: [{ id: 'mail:x', label: 'PRIVATE MAIL BODY' }], counts: {}, coverage: {} }), messages: [{ role: 'user', content: '나랑 최근에 가장 많이 메일 주고받은 사람 누구임?' }] }) }));
+  const data = await res.json();
+  assert.equal(res.status, 200); assert.equal(data.plan.operation, 'aggregate');
+  assert.match(sent.messages[0].content, /FULL local account graph/);
+  assert.ok(!JSON.stringify(sent).includes('PRIVATE MAIL BODY'));
+  assert.ok(!sent.messages[1].content.includes('1900-01-01'));
+  assert.deepEqual(sent.models, ['google/gemma-4-26b-a4b-it:free', 'openrouter/free']);
+  assert.equal(res.headers.get('Cache-Control'), 'private, no-store');
+});
+
+test('planner rejects invalid model output, invalid timezones and unauthenticated requests', async () => {
+  const request = timeZone => new Request('https://clara.test/api/chat', { method: 'POST', body: JSON.stringify({ mode: 'ontology_plan', plannerContext: { timeZone }, messages: [{ role: 'user', content: 'Delete mail' }] }) });
+  for (const content of ['not JSON', JSON.stringify({ operation: 'delete', types: ['Email'], scope: 'all' }), JSON.stringify({ operation: 'count', types: ['Email'], scope: 'all', execute: 'fetch()' })]) {
+    const r = await route('chat', { fetch: async () => Response.json({ choices: [{ message: { content } }] }) });
+    assert.equal((await r.POST(request('Asia/Seoul'))).status, 502);
+  }
+  const r = await route('chat');
+  assert.equal((await r.POST(request('Invalid/Zone'))).status, 400);
+  assert.equal((await (await route('chat', { session: null })).POST(request('Asia/Seoul'))).status, 401);
 });

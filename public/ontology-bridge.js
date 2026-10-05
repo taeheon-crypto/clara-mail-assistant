@@ -9,7 +9,7 @@ window._claraChatFetch = async function(url, options) {
     if (current?.gmailId) focusId = 'mail:' + current.gmailId;
   }
   if (window.ClaraOntology) {
-    const answer = await window.ClaraOntology.query?.(question);
+    const answer = await window.ClaraOntology.query?.(question, { messages: payload.messages, focusId });
     if (answer) return Response.json({ content: [{ text: answer.text }], knowledgeSource: 'ontology', answerMode: answer.kind });
     payload.ontologyContext = await window.ClaraOntology.context(question, focusId);
   }
