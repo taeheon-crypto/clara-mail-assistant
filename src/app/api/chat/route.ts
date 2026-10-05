@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@/auth';
 import { PLANNER_SYSTEM, validatePlan } from '../../../../public/ontology-plan.mjs';
-import { AGENT_SYSTEM, AGENT_REPAIR_SYSTEM, validateDecision } from '../../../../public/ontology-agent.mjs';
+import { AGENT_SYSTEM, AGENT_REPAIR_SYSTEM, AGENT_RESPONSE_FORMAT, validateDecision } from '../../../../public/ontology-agent.mjs';
 
 const MODEL = 'google/gemma-4-26b-a4b-it:free';
 const MODELS = [MODEL, 'openrouter/free'];
@@ -64,7 +64,7 @@ export async function POST(req: Request) {
     const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST', signal: AbortSignal.timeout(25000),
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`, 'HTTP-Referer': process.env.APP_URL || 'http://localhost:3000', 'X-Title': 'Clara Mail Assistant' },
-      body: JSON.stringify({ models: MODELS, max_tokens: Math.min(4096, Math.max(128, Number(body.max_tokens) || 1024)), ...(agent ? { response_format: { type: 'json_object' } } : {}), messages }),
+      body: JSON.stringify({ models: agent ? ['openrouter/free', MODEL] : MODELS, max_tokens: Math.min(4096, Math.max(128, Number(body.max_tokens) || 1024)), ...(agent ? { response_format: AGENT_RESPONSE_FORMAT, provider: { require_parameters: true } } : {}), messages }),
     });
     let data = await res.json().catch(() => null);
     // A free reasoning model may exhaust its output budget before a final answer.
@@ -72,7 +72,7 @@ export async function POST(req: Request) {
     if (res.ok && !data?.error && !data?.choices?.[0]?.message?.content?.trim() && deadline - Date.now() > 1500) {
       const retry = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST', signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())), headers: requestHeaders,
-        body: JSON.stringify({ model: 'openrouter/free', max_tokens: Math.max(2048, Math.min(4096, Number(body.max_tokens) || 2048)), ...(agent ? { response_format: { type: 'json_object' } } : {}), messages }),
+        body: JSON.stringify({ model: 'openrouter/free', max_tokens: Math.max(2048, Math.min(4096, Number(body.max_tokens) || 2048)), ...(agent ? { response_format: AGENT_RESPONSE_FORMAT, provider: { require_parameters: true } } : {}), messages }),
       });
       const retried = await retry.json().catch(() => null);
       if (retry.ok && typeof retried?.choices?.[0]?.message?.content === 'string' && retried.choices[0].message.content.trim()) data = retried;
@@ -96,12 +96,15 @@ export async function POST(req: Request) {
     if (agent) {
       try {
         const known = new Set<string>(body.agentTrace.flatMap((step: { output?: { nodes?: { id: string }[] } }) => (step.output?.nodes || []).map(n => n.id)));
-        const allowedSources = [...known].filter(id => /^(mail|event):/.test(id));
+        const exactQuery = body.agentTrace.some((step: { name?: string; output?: { kind?: string; total?: number } }) => step.name === 'query_ontology' && ['count', 'aggregate'].includes(step.output?.kind || '') && typeof step.output?.total === 'number');
+        if (exactQuery) known.add('ontology:query');
+        const allowedSources = [...known].filter(id => /^(mail|event):/.test(id) || id === 'ontology:query');
         const parse = (candidate: string) => {
           try {
-            const result = validateDecision(JSON.parse(candidate.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')));
+            const parsed = JSON.parse(candidate.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, ''));
+            const result = validateDecision(parsed && Object.keys(parsed).length === 1 && parsed.decision ? parsed.decision : parsed);
             if ('error' in result || result.decision.action !== 'answer') return result;
-            const cited = [...result.decision.text.matchAll(/\[((?:mail|event):[^\]\n]+)\]/g)].map(m => m[1]);
+            const cited = [...result.decision.text.matchAll(/\[((?:mail|event):[^\]\n]+|ontology:query)\]/g)].map(m => m[1]);
             if (cited.some(id => !known.has(id))) return { error: '답변의 인용이 조회 근거와 일치하지 않습니다.', code: 'unknown_citation' };
             if (allowedSources.length && !cited.length) return { error: '답변에 원본 근거 인용이 없습니다.', code: 'missing_citation' };
             return result;
@@ -115,7 +118,7 @@ export async function POST(req: Request) {
           if (deadline - Date.now() > 1500) {
             const repaired = await fetch('https://openrouter.ai/api/v1/chat/completions', {
               method: 'POST', signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())), headers: requestHeaders,
-              body: JSON.stringify({ models: MODELS, max_tokens: 4096, response_format: { type: 'json_object' }, messages: [...messages, { role: 'assistant', content: text.slice(0, 20000) }, { role: 'system', content: AGENT_REPAIR_SYSTEM + '\nValidation code: ' + checked.code + '\nFor final answers, cite only these EXACT source IDs in brackets, using source content that actually supports the claim. Do not cite person/project/ontology IDs as original sources: ' + JSON.stringify(allowedSources.slice(0, 180)) }] }),
+              body: JSON.stringify({ models: ['openrouter/free', MODEL], max_tokens: 4096, response_format: AGENT_RESPONSE_FORMAT, provider: { require_parameters: true }, messages: [...messages, { role: 'assistant', content: text.slice(0, 20000) }, { role: 'system', content: AGENT_REPAIR_SYSTEM + '\nReturn {decision: ...} matching the supplied schema. Validation code: ' + checked.code + '\nIf fixing a citation error, revise the FINAL ANSWER rather than repeating a query merely to change format. Cite only these EXACT supported IDs in brackets: ' + JSON.stringify(allowedSources.slice(0, 180)) }] }),
             });
             const repairedData = await repaired.json().catch(() => null);
             const candidate = repairedData?.choices?.[0]?.message?.content;

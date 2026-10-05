@@ -50,7 +50,8 @@ test('UI indexes both sources, stores confirmed links, restores them, and isolat
     await import('../public/ontology-client.mjs?test=' + ++bootId);
     await w.ClaraOntology.ready;
     for (let i = 0; i < 100; i++) {
-      if (JSON.parse(await w.ClaraOntology.context('Atlas')).coverage.mail.status === 'complete') break;
+      const coverage = JSON.parse(await w.ClaraOntology.context('Atlas')).coverage;
+      if (coverage.mail.status === 'complete' && coverage.calendar.status === 'complete') break;
       await new Promise(resolve => originalTimeout(resolve, 5));
     }
     assert.equal(JSON.parse(await w.ClaraOntology.context('Atlas')).coverage.mail.status, 'complete');

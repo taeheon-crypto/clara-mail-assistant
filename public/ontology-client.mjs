@@ -267,11 +267,11 @@ window.ClaraOntology = {
     const current = () => { if (account !== agentAccount || state !== agentState) throw new Error('계정이나 자료가 변경되었습니다. 같은 질문을 다시 보내 주세요.'); };
     const sourceIds = new Set();
     let lastQuery, lastQueryPlan;
-    const snapshot = nodes => nodes.map(n => {
+    const snapshot = (nodes, includeText = true) => nodes.map(n => {
       const text = String(n.properties.text || '');
       if (['Email', 'Event'].includes(n.type)) sourceIds.add(n.id);
       if (['Task', 'Document'].includes(n.type)) for (const id of n.provenance.sourceIds) if (['Email', 'Event'].includes(graph.byId.get(id)?.type)) sourceIds.add(id);
-      return { ...n, provenance: { ...n.provenance, sourceIds: n.provenance.sourceIds.slice(0, 6) }, properties: { ...n.properties, text: text.slice(0, 900), textIsExcerpt: text.length > 900 } };
+      return { ...n, provenance: { ...n.provenance, sourceIds: n.provenance.sourceIds.slice(0, 6) }, properties: { ...n.properties, text: includeText ? text.slice(0, 900) : '', textIsExcerpt: !includeText || text.length > 900 } };
     });
     const history = messages.slice(-10).filter(m => ['user', 'assistant'].includes(m?.role) && typeof m.content === 'string').map(m => ({ role: m.role, content: m.content.slice(0, 12000) }));
     if (history.at(-1)?.role !== 'user' || history.at(-1)?.content !== question) history.push({ role: 'user', content: question });
@@ -310,9 +310,10 @@ window.ClaraOntology = {
         if (name === 'query_ontology') {
           lastQuery = selected; lastQueryPlan = args.plan;
           // Execute only the AI's plan; no phrase parser chooses chat intent.
-          const nodes = snapshot(selected?.records?.slice(0, 24) || []);
+          const includeText = !['aggregate', 'count'].includes(selected?.kind);
+          const nodes = snapshot(selected?.records?.slice(0, 24) || [], includeText);
           for (const n of [...nodes]) if (['Task', 'Document'].includes(n.type)) for (const id of n.provenance.sourceIds) if (!nodes.some(s => s.id === id) && graph.byId.has(id) && nodes.length < 30) nodes.push(...snapshot([graph.byId.get(id)]));
-          for (const group of selected?.groups?.slice(0, 20) || []) for (const id of group.sourceIds.slice(0, 2)) if (!nodes.some(n => n.id === id) && graph.byId.has(id) && nodes.length < 30) nodes.push(...snapshot([graph.byId.get(id)]));
+          for (const group of selected?.groups?.slice(0, 20) || []) for (const id of group.sourceIds.slice(0, 2)) if (!nodes.some(n => n.id === id) && graph.byId.has(id) && nodes.length < 30) nodes.push(...snapshot([graph.byId.get(id)], includeText));
           return { kind: selected?.kind, total: selected?.total, matchedTotal: selected?.matchedTotal, complete: selected?.complete, summary: selected?.text?.slice(0, 16000), groups: selected?.groups?.slice(0, 20).map(g => ({ ...g, sourceIds: g.sourceIds.slice(0, 2) })), nodes, evidenceIsSample: (selected?.records?.length || 0) > nodes.length };
         }
         const found = retrieveEvidence(graph, args.question, { focusId, limit: 24, allowedSourceIds: selected ? new Set(selected.records.map(n => n.id)) : undefined });

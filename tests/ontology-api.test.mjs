@@ -4,13 +4,13 @@ import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import ts from 'typescript';
 import { PLANNER_SYSTEM, validatePlan } from '../public/ontology-plan.mjs';
-import { AGENT_SYSTEM, AGENT_REPAIR_SYSTEM, validateDecision } from '../public/ontology-agent.mjs';
+import { AGENT_SYSTEM, AGENT_REPAIR_SYSTEM, AGENT_RESPONSE_FORMAT, validateDecision } from '../public/ontology-agent.mjs';
 
 async function route(path, { session = { user: { email: 'me@example.com' }, accessToken: 'test-token' }, fetch: fetchStub = () => { throw new Error('Unexpected network call'); } } = {}) {
   const source = await readFile(new URL('../src/app/api/' + path + '/route.ts', import.meta.url), 'utf8');
   const js = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   const exports = {};
-  vm.runInNewContext(js, { exports, console: { warn() {} }, require(name) { if (name === '@/auth') return { auth: async () => session }; if (name === 'next/server') return { NextResponse: { json: Response.json } }; if (name.endsWith('/ontology-plan.mjs')) return { PLANNER_SYSTEM, validatePlan }; if (name.endsWith('/ontology-agent.mjs')) return { AGENT_SYSTEM, AGENT_REPAIR_SYSTEM, validateDecision }; throw new Error(name); }, fetch: fetchStub, URL, Buffer, AbortSignal, Request, Response, process: { env: { OPENROUTER_API_KEY: 'test-key' } } });
+  vm.runInNewContext(js, { exports, console: { warn() {} }, require(name) { if (name === '@/auth') return { auth: async () => session }; if (name === 'next/server') return { NextResponse: { json: Response.json } }; if (name.endsWith('/ontology-plan.mjs')) return { PLANNER_SYSTEM, validatePlan }; if (name.endsWith('/ontology-agent.mjs')) return { AGENT_SYSTEM, AGENT_REPAIR_SYSTEM, AGENT_RESPONSE_FORMAT, validateDecision }; throw new Error(name); }, fetch: fetchStub, URL, Buffer, AbortSignal, Request, Response, process: { env: { OPENROUTER_API_KEY: 'test-key' } } });
   return exports;
 }
 test('sync endpoints reject unauthenticated calls without contacting Google', async () => {
@@ -122,6 +122,14 @@ test('agent accepts arbitrary conversational intent and returns a validated tool
   assert.match(sent.messages[1].content, /Agent clock/);
 });
 
+test('schema-wrapped responses and exact aggregate evidence are accepted without fabricated mail citations', async () => {
+  const response = { decision: { action: 'answer', text: 'Founder exchanged 12 emails. [ontology:query]' } };
+  const r = await route('chat', { fetch: async () => Response.json({ choices: [{ message: { content: JSON.stringify(response) } }] }) });
+  const request = trace => new Request('https://clara.test/api/chat', { method: 'POST', body: JSON.stringify({ mode: 'ontology_agent', remainingTools: 3, agentContext: { accountEmail: 'me@example.com', timeZone: 'Asia/Seoul' }, agentTrace: trace, messages: [{ role: 'user', content: 'Who do I exchange most emails with?' }] }) });
+  assert.equal((await r.POST(request([{ name: 'query_ontology', output: { kind: 'aggregate', total: 12, nodes: [{ id: 'mail:real' }] } }]))).status, 200);
+  assert.equal((await r.POST(request([{ name: 'search_evidence', output: { nodes: [{ id: 'mail:real' }] } }]))).status, 502);
+});
+
 test('agent repairs an invalid tool decision once before returning it to the executor', async () => {
   const sent = [];
   const good = { action: 'tool', name: 'query_ontology', arguments: { plan: { operation: 'aggregate', types: ['Email'], scope: 'all', groupBy: 'person', direction: 'exchanged', limit: 1 } } };
@@ -132,7 +140,9 @@ test('agent repairs an invalid tool decision once before returning it to the exe
   const res = await r.POST(new Request('https://clara.test/api/chat', { method: 'POST', body: JSON.stringify({ mode: 'ontology_agent', remainingTools: 6, agentContext: { accountEmail: 'me@example.com', timeZone: 'Asia/Seoul' }, agentTrace: [], messages: [{ role: 'user', content: '나랑 최근에 이메일 가장 많이 주고받은 사람 누구?' }] }) }));
   assert.equal(res.status, 200); assert.equal(sent.length, 2);
   assert.equal((await res.json()).decision.arguments.plan.direction, 'exchanged');
-  assert.equal(sent[0].response_format.type, 'json_object');
+  assert.equal(sent[0].response_format.type, 'json_schema');
+  assert.equal(sent[0].response_format.json_schema.strict, true);
+  assert.equal(sent[0].provider.require_parameters, true);
   assert.match(sent[1].messages.at(-1).content, /aggregate_direction_required/);
 });
 
