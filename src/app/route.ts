@@ -1,11 +1,11 @@
 import { redirect } from "next/navigation";
-import { auth, signIn } from "@/auth";
+import { auth } from "@/auth";
 
 export async function GET() {
   const session = await auth();
 
   if (!session) {
-    await signIn("google", { redirectTo: "/app.html" });
+    redirect("/login");
   }
 
   redirect("/app.html");
