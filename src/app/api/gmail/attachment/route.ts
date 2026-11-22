@@ -1,3 +1,4 @@
+import { gmailFetch } from '@/lib/gmail-transport';
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 
@@ -18,10 +19,7 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "missing_params" }, { status: 400 });
   }
 
-  const res = await fetch(
-    `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}/attachments/${attachmentId}`,
-    { headers: { Authorization: `Bearer ${accessToken}` } }
-  );
+  const res = await gmailFetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}/attachments/${attachmentId}`, accessToken);
   if (!res.ok) {
     return NextResponse.json({ error: "gmail_attachment_failed" }, { status: res.status });
   }

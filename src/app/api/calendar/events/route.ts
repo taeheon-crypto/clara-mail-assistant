@@ -64,6 +64,7 @@ export async function GET(req: Request) {
       }
       events.push({
         id: ev.id,
+        recurringEventId: ev.recurringEventId || null,
         calendarId: calId,
         date: toDateKey(startRaw),
         endDate: isAllDay ? endDateKey : toDateKey(startRaw),

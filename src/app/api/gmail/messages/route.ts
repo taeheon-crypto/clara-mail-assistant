@@ -1,3 +1,4 @@
+import { gmailFetch, gmailMetadataBatch } from '@/lib/gmail-transport';
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 
@@ -143,22 +144,35 @@ export async function GET(req: Request) {
   const accessToken = (session as any).accessToken as string;
 
   const { searchParams } = new URL(req.url);
+  const messageId = searchParams.get('id');
+  if (messageId && !/^[a-f0-9]{1,32}$/i.test(messageId)) return NextResponse.json({ error: 'invalid_message' }, { status: 400 });
   const pageToken = searchParams.get("pageToken");
+  const folder = searchParams.get("folder") || "inbox";
+  const mailboxes: Record<string, { label?: string; query?: string; includeSpamTrash?: boolean }> = {
+    inbox: { label: "INBOX" }, starred: { label: "STARRED" }, snoozed: { query: "in:snoozed" },
+    important: { label: "IMPORTANT" }, sent: { label: "SENT" }, drafts: { label: "DRAFT" },
+    purchases: { query: "category:purchases" }, social: { query: "category:social" },
+    updates: { query: "category:updates" }, forums: { query: "category:forums" }, promotions: { query: "category:promotions" },
+    all: {}, spam: { label: "SPAM", includeSpamTrash: true }, deleted: { label: "TRASH", includeSpamTrash: true },
+    primary: { label: "INBOX", query: "category:primary" },
+  };
+  if (!Object.hasOwn(mailboxes, folder)) return NextResponse.json({ error: "invalid_mailbox" }, { status: 400 });
+  const mailbox = mailboxes[folder];
 
   const listUrl = new URL("https://gmail.googleapis.com/gmail/v1/users/me/messages");
-  listUrl.searchParams.set("maxResults", "15");
-  listUrl.searchParams.set("labelIds", "INBOX");
+  listUrl.searchParams.set("maxResults", "30");
+  if (mailbox.label) listUrl.searchParams.set("labelIds", mailbox.label);
+  if (mailbox.query) listUrl.searchParams.set("q", mailbox.query);
+  if (mailbox.includeSpamTrash) listUrl.searchParams.set("includeSpamTrash", "true");
   if (pageToken) listUrl.searchParams.set("pageToken", pageToken);
 
-  const listRes = await fetch(listUrl.toString(), {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
+  const listRes = messageId ? Response.json({ messages: [{ id: messageId }] }) : await gmailFetch(listUrl, accessToken);
   if (!listRes.ok) {
     const bodyText = await listRes.text().catch(() => "");
     console.error(`gmail list failed status=${listRes.status} body=${bodyText.slice(0, 400)}`);
-    const quotaExceeded = bodyText.includes("Quota exceeded") || bodyText.includes("rateLimitExceeded");
+    const quotaExceeded = listRes.status === 429 || /quota|rateLimitExceeded|dailyLimitExceeded/i.test(bodyText);
     return NextResponse.json(
-      { error: quotaExceeded ? "quota_exceeded" : "gmail_list_failed", detail: bodyText.slice(0, 300) },
+      { error: quotaExceeded ? "quota_exceeded" : "gmail_list_failed", detail: bodyText.slice(0, 300), retryAfterMs: Math.max(60000, Number(listRes.headers.get("Retry-After") || 60) * 1000) },
       { status: listRes.status }
     );
   }
@@ -167,18 +181,21 @@ export async function GET(req: Request) {
   const nextPageToken: string | null = listData.nextPageToken || null;
 
   let quotaHit = false;
+  let retryAfterMs = 60000;
+  let incompletePage = false;
+  // A resumed page only needs the messages not already held by this browser.
+  const loadedIds = new Set((searchParams.get("loadedIds") || "").split(",").filter(id => /^[a-f0-9]{1,32}$/i.test(id)).slice(0, 30));
   // 한꺼번에 너무 많이 병렬 요청하면 Gmail API 레이트리밋에 걸려 일부 메일이 누락됨 → 작은 배치 + 재시도로 보완.
   // 단, "분당 할당량 초과"는 몇 초 재시도한다고 풀리지 않으므로 그 경우엔 즉시 포기한다 (더 두드리면 역효과).
   async function fetchOne(id: string, attempt = 0): Promise<any | null> {
     if (quotaHit) return null; // 이미 할당량 초과를 확인했으면 나머지는 시도조차 하지 않음
-    const r = await fetch(
-      `https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=full`,
-      { headers: { Authorization: `Bearer ${accessToken}` } }
-    );
+    const r = await gmailFetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=full`, accessToken);
     if (r.ok) return r.json();
     const bodyText = await r.text().catch(() => "");
-    if (bodyText.includes("Quota exceeded") || bodyText.includes("rateLimitExceeded")) {
+    if (r.status === 429 || /quota|rateLimitExceeded|dailyLimitExceeded/i.test(bodyText)) {
       quotaHit = true;
+      retryAfterMs = Math.max(60000, Number(r.headers.get("Retry-After") || 60) * 1000);
+      incompletePage = true;
       console.error(`gmail quota exceeded, aborting remaining fetches`);
       return null;
     }
@@ -187,17 +204,32 @@ export async function GET(req: Request) {
       await new Promise((res) => setTimeout(res, 300 * Math.pow(2, attempt)));
       return fetchOne(id, attempt + 1);
     }
-    console.error(`gmail message fetch failed permanently: ${id} status=${r.status} body=${bodyText.slice(0, 400)}`);
+    if (r.status !== 404) incompletePage = true;
+    console.error(`gmail message fetch failed permanently: ${id} status=${r.status}`);
     return null; // 재시도해도 실패하면 이 메일은 건너뜀 (깨진 행 대신 그냥 제외)
   }
 
   const BATCH_SIZE = 5;
   const messages: any[] = [];
-  for (let i = 0; i < ids.length; i += BATCH_SIZE) {
-    const batch = ids.slice(i, i + BATCH_SIZE);
+  const pendingIds = ids.filter(message => !loadedIds.has(message.id));
+  if (!messageId) {
+    const results = await gmailMetadataBatch(pendingIds.map(m => m.id), accessToken);
+    for (const response of results) {
+      if (response.ok) messages.push(await response.json());
+      else if (response.status !== 404) {
+        incompletePage = true;
+        const text = await response.text();
+        if (response.status === 429 || /quota|rateLimitExceeded/i.test(text)) {
+          quotaHit = true; retryAfterMs = Math.max(retryAfterMs, Number(response.headers.get('Retry-After') || 60) * 1000);
+        }
+      }
+    }
+  } else for (let i = 0; i < pendingIds.length; i += BATCH_SIZE) {
+    const batch = pendingIds.slice(i, i + BATCH_SIZE);
     const results = await Promise.all(batch.map((m) => fetchOne(m.id)));
     messages.push(...results);
-    if (i + BATCH_SIZE < ids.length) await new Promise((res) => setTimeout(res, 120));
+    if (quotaHit) break;
+    if (i + BATCH_SIZE < pendingIds.length) await new Promise((res) => setTimeout(res, 120));
   }
 
   const emails = messages.filter((msg) => msg && msg.payload).map((msg) => {
@@ -230,15 +262,18 @@ export async function GET(req: Request) {
       ccHeader,
       toHeader,
       subject,
-      preview: body.slice(0, 140),
+      preview: body.slice(0, 140) || msg.snippet || "",
+      bodyLoaded: !!messageId,
       body,
       bodyHtml,
       date,
       unread,
       starred,
       attachments,
+      labelIds: msg.labelIds || [],
+      mailbox: folder,
     };
   });
 
-  return NextResponse.json({ emails, nextPageToken: quotaHit ? null : nextPageToken, quotaExceeded: quotaHit });
+  return NextResponse.json({ emails, mailbox: folder, nextPageToken: incompletePage ? pageToken : nextPageToken, retryPage: incompletePage, quotaExceeded: quotaHit, retryAfterMs: quotaHit ? retryAfterMs : incompletePage ? 5000 : 0 });
 }

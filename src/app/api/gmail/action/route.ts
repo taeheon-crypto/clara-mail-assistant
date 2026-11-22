@@ -1,3 +1,4 @@
+import { invalidateGmail } from '@/lib/gmail-transport';
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 
@@ -27,6 +28,15 @@ export async function POST(req: Request) {
   let res: Response;
 
   switch (action) {
+    case "archive":
+      if (!gmailId) return NextResponse.json({ error: "missing_gmailId" }, { status: 400 });
+      res = await modify([], ["INBOX"]);
+      break;
+    case "star":
+    case "unstar":
+      if (!gmailId) return NextResponse.json({ error: "missing_gmailId" }, { status: 400 });
+      res = action === "star" ? await modify(["STARRED"], []) : await modify([], ["STARRED"]);
+      break;
     case "trash":
       if (!gmailId) return NextResponse.json({ error: "missing_gmailId" }, { status: 400 });
       res = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${gmailId}/trash`, {
@@ -76,5 +86,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "gmail_action_failed", detail: errText.slice(0, 300) }, { status: res.status });
   }
 
+  invalidateGmail(accessToken, gmailId);
   return NextResponse.json({ success: true });
 }

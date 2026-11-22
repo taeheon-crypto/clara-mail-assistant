@@ -302,12 +302,30 @@ body{display:flex;flex-direction:row;align-items:center;justify-content:center;
 .em-row.unread .em-preview{color:var(--fg-s)}
 
 /* Detail panel */
+.gmail-folder-list .fp-item{min-height:28px;padding:4px 12px;gap:12px;margin:0;border-radius:0 16px 16px 0;font-size:13px;color:#202124}
+.gmail-folder-list .fp-item.active{background:#d3e3fd;color:#001d35;font-weight:600}
+.gmail-folder-list .fp-item svg{width:16px;height:16px;flex-shrink:0}
+.gmail-more-folders summary{padding:8px 14px;font-size:13px;color:#5f6368;cursor:pointer}
 .ed{flex:1;display:flex;flex-direction:column;overflow:hidden;background:var(--bg);min-width:0;position:relative}
 .ed-blank{flex:1;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;color:var(--fg-s)}
 .ed-blank svg{width:36px;height:36px;stroke:currentColor;opacity:.2}
 .ed-blank p{font-size:13px}
 .ed-view{display:none;flex-direction:column;flex:1;overflow:hidden}
 .ed-view.show{display:flex}
+.ed.ai-workspace{flex-direction:row;overflow-x:auto;gap:6px}
+.ed.ai-workspace #ed-blank{flex:0 0 56%;min-width:460px;width:auto!important;height:100%;overflow:hidden}
+.ed.ai-workspace #ed-view{display:flex!important;flex:1 0 320px!important;min-width:320px;border-left:1px solid var(--border-s);background:#fff}
+.ed.ai-workspace:not(.ai-mail-open) #ed-view>*{display:none!important}
+.ed.ai-workspace:not(.ai-mail-open) #ed-view::after{content:'관련 메일을 선택하면 원문이 여기에 표시됩니다';margin:auto;padding:24px;color:var(--fg-s);font-size:13px;text-align:center}
+.ai-workspace #ba-source-panel{width:280px!important;min-width:200px!important;flex:0 0 44%}
+.ai-workspace #ba-source-list table{min-width:0!important;table-layout:auto!important}
+.ai-workspace #ba-source-list colgroup{display:none}
+.ai-workspace #ba-source-list th:first-child,.ai-workspace #ba-source-list td:first-child{display:none}
+.ai-workspace #ba-source-list td:nth-child(2){width:auto}
+.ai-workspace #ba-source-list .ba-att-link{word-break:normal!important;overflow-wrap:anywhere}
+.ai-workspace #ba-source-list th:nth-child(n+4),.ai-workspace #ba-source-list td:nth-child(n+4),.ai-workspace #ba-source-list col:nth-child(n+4){display:none}
+.ai-workspace #ba-source-list col:nth-child(2){width:auto!important}
+.ai-workspace #ba-source-list tr[data-mail-id].selected{background:#f1ebff;box-shadow:inset 3px 0 var(--primary)}
 
 /* email detail header */
 .edh{padding:16px 20px 10px;border-bottom:1px solid var(--border);flex-shrink:0}
@@ -327,20 +345,22 @@ body{display:flex;flex-direction:row;align-items:center;justify-content:center;
 .g-ico-btn{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:var(--fg-m);transition:background .1s}
 .g-ico-btn:hover{background:var(--bg-muted)}
 .g-ico-btn svg{width:16px;height:16px;stroke:currentColor}
-.gmail-sender-bar{display:flex;align-items:flex-start;gap:12px;padding:10px 20px 16px;flex-shrink:0;border-bottom:1px solid var(--border-s)}
+.gmail-sender-bar{display:flex;flex-wrap:wrap;align-items:flex-start;gap:12px;padding:10px 20px 16px;flex-shrink:0;border-bottom:1px solid var(--border-s)}
 .gmail-av{width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;color:#fff;flex-shrink:0}
-.gmail-sender-info{flex:1;min-width:0}
+.gmail-sender-info{flex:1 1 120px;min-width:0}
 .gmail-sender-name{font-size:14px;font-weight:600;color:var(--fg)}
 .gmail-sender-to{font-size:12px;color:var(--fg-s);margin-top:1px}
-.gmail-to-me-btn{font-size:12px;color:var(--fg-s);background:none;border:none;cursor:pointer;padding:0;margin-top:2px;transition:color .1s;text-align:left}
+.gmail-to-me-btn{font-size:12px;color:var(--fg-s);background:none;border:none;cursor:pointer;padding:0;margin-top:2px;transition:color .1s;text-align:left;max-width:100%;overflow-wrap:anywhere}
 .gmail-to-me-btn:hover{color:var(--primary)}
 
 /* 메타 팝오버 */
 .meta-popup{display:none;position:absolute;left:0;top:calc(100% + 4px);background:#fff;border:1px solid var(--border);border-radius:10px;padding:14px 16px;box-shadow:0 4px 20px rgba(0,0,0,.14);z-index:1000;min-width:340px;white-space:nowrap}
 .meta-popup.show{display:block}
-.meta-popup-row{display:grid;grid-template-columns:80px 1fr;gap:6px;padding:3px 0;font-size:13px;line-height:1.5}
-.meta-popup-label{color:var(--fg-s);text-align:right;font-weight:500}
-.meta-popup-val{color:var(--fg);font-weight:500}
+.meta-popup{max-width:min(520px,calc(100vw - 24px));min-width:min(340px,calc(100vw - 24px));box-sizing:border-box;max-height:70vh;overflow:auto}
+.meta-popup-row[hidden]{display:none}
+.meta-popup-row{display:grid;grid-template-columns:104px minmax(0,1fr);gap:10px;padding:3px 0;font-size:13px;line-height:1.5;align-items:start}
+.meta-popup-label{color:var(--fg-s);text-align:right;font-weight:500;white-space:normal;word-break:keep-all;overflow-wrap:anywhere}
+.meta-popup-val{color:var(--fg);font-weight:500;white-space:normal;overflow-wrap:anywhere}
 .meta-popup-val b{font-weight:700}
 .gmail-meta-right{display:flex;align-items:center;gap:2px;flex-shrink:0}
 .gmail-date{font-size:12px;color:var(--fg-s);margin-right:4px;white-space:nowrap}
@@ -865,25 +885,19 @@ body{display:flex;flex-direction:row;align-items:center;justify-content:center;
             <button id="gmail-connect-btn" onclick="_gmailConnect()" title="Gmail 계정 연동" style="display:inline-flex;align-items:center;gap:6px;padding:0 14px;height:34px;background:rgba(108,53,222,.08);border:none;border-radius:9px;cursor:pointer;font-size:12px;font-weight:600;color:#6c35de;font-family:inherit;transition:all .15s;width:100%;justify-content:center" onmouseenter="this.style.background='rgba(108,53,222,.15)'" onmouseleave="this.style.background='rgba(108,53,222,.08)'"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" style="flex-shrink:0"><path d="M21.2 11.2a9.6 9.6 0 1 1-1.7-5.1M21.2 4v7.2H14"/></svg> Gmail 연동</button>
           </div>
           <div class="fp-body">
-            <div id="fp-mail-list">
-            <div class="fp-grp">
-              <div class="fp-list">
-                <div class="fp-item active" onclick="fpSel(this,'inbox')"><svg viewBox="0 0 24 24" stroke="currentColor"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>Inbox<span class="fp-dot"></span></div>
-                <div class="fp-item" onclick="fpSel(this,'primary')"><svg viewBox="0 0 24 24" stroke="currentColor"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>Starred</div>
-                <div class="fp-item" onclick="fpSel(this,'snoozed')"><svg viewBox="0 0 24 24" stroke="currentColor"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>Snoozed</div>
-                <div class="fp-item" onclick="fpSel(this,'important')"><svg viewBox="0 0 24 24" stroke="currentColor"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>Important</div>
-                <div class="fp-item" onclick="fpSel(this,'sent')"><svg viewBox="0 0 24 24" stroke="currentColor"><path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z"/><path d="m21.854 2.147-10.94 10.939"/></svg>Sent</div>
-                <div class="fp-item" onclick="fpSel(this,'drafts')"><svg viewBox="0 0 24 24" stroke="currentColor"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>Drafts</div>
-                <div class="fp-item" onclick="fpSel(this,'shopping')"><svg viewBox="0 0 24 24" stroke="currentColor"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" x2="21" y1="6" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>Shopping</div>
-                <div class="fp-item" onclick="fpSel(this,'updates')"><svg viewBox="0 0 24 24" stroke="currentColor"><path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/></svg>Updates</div>
-                <div class="fp-item" onclick="fpSel(this,'deleted')"><svg viewBox="0 0 24 24" stroke="currentColor"><path d="M3 6h18M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/></svg>Deleted</div>
-              </div>
-            </div>
-            <div class="fp-grp">
-              <div class="fp-grp-hdr"><svg viewBox="0 0 24 24" stroke="currentColor"><path d="m6 9 6 6 6-6"/></svg><span>Shared Inbox</span></div>
-              <div class="fp-empty">No shared emails</div>
-            </div>
-            </div><!-- /fp-mail-list -->
+            <div id="fp-mail-list" class="gmail-folder-list"><div class="fp-grp"><div class="fp-list"><div class="fp-item active" data-mailbox="inbox" onclick="fpSel(this,'inbox')"><svg viewBox="0 0 24 24" stroke="currentColor"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg><span>받은편지함</span></div>
+<div class="fp-item" data-mailbox="starred" onclick="fpSel(this,'starred')"><svg viewBox="0 0 24 24" stroke="currentColor"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg><span>별표편지함</span></div>
+<div class="fp-item" data-mailbox="snoozed" onclick="fpSel(this,'snoozed')"><svg viewBox="0 0 24 24" stroke="currentColor"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span>다시 알림 항목</span></div>
+<div class="fp-item" data-mailbox="important" onclick="fpSel(this,'important')"><svg viewBox="0 0 24 24" stroke="currentColor"><path d="M4 4h10l6 8-6 8H4l6-8z"/></svg><span>중요편지함</span></div>
+<div class="fp-item" data-mailbox="sent" onclick="fpSel(this,'sent')"><svg viewBox="0 0 24 24" stroke="currentColor"><path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z"/><path d="m21.854 2.147-10.94 10.939"/></svg><span>보낸편지함</span></div>
+<div class="fp-item" data-mailbox="drafts" onclick="fpSel(this,'drafts')"><svg viewBox="0 0 24 24" stroke="currentColor"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg><span>임시보관함</span></div>
+<div class="fp-item" data-mailbox="purchases" onclick="fpSel(this,'purchases')"><svg viewBox="0 0 24 24" stroke="currentColor"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" x2="21" y1="6" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/></svg><span>구매</span></div>
+<div class="fp-item" data-mailbox="social" onclick="fpSel(this,'social')"><svg viewBox="0 0 24 24" stroke="currentColor"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M20 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg><span>소셜</span></div>
+<div class="fp-item" data-mailbox="updates" onclick="fpSel(this,'updates')"><svg viewBox="0 0 24 24" stroke="currentColor"><circle cx="12" cy="12" r="10"/><path d="M12 11v6M12 7h.01"/></svg><span>업데이트</span></div>
+<div class="fp-item" data-mailbox="forums" onclick="fpSel(this,'forums')"><svg viewBox="0 0 24 24" stroke="currentColor"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span>포럼</span></div>
+<div class="fp-item" data-mailbox="promotions" onclick="fpSel(this,'promotions')"><svg viewBox="0 0 24 24" stroke="currentColor"><path d="M20 13 13 20 3 10V3h7z"/><circle cx="7.5" cy="7.5" r=".5"/></svg><span>프로모션</span></div></div></div><details class="gmail-more-folders"><summary>더보기</summary><div class="fp-list"><div class="fp-item" data-mailbox="all" onclick="fpSel(this,'all')"><svg viewBox="0 0 24 24" stroke="currentColor"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg><span>전체메일</span></div>
+<div class="fp-item" data-mailbox="spam" onclick="fpSel(this,'spam')"><svg viewBox="0 0 24 24" stroke="currentColor"><path d="m8 3-5 5v8l5 5h8l5-5V8l-5-5z"/><path d="M12 7v6M12 17h.01"/></svg><span>스팸함</span></div>
+<div class="fp-item" data-mailbox="deleted" onclick="fpSel(this,'deleted')"><svg viewBox="0 0 24 24" stroke="currentColor"><path d="M3 6h18M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/></svg><span>휴지통</span></div></div></details></div><!-- /fp-mail-list -->
 
           </div>
           </div><!-- /fp-mail-view -->
@@ -1177,7 +1191,7 @@ body{display:flex;flex-direction:row;align-items:center;justify-content:center;
                     <div style="display:flex;align-items:center;gap:8px">
                       <button style="display:flex;align-items:center;gap:5px;background:none;border:none;cursor:pointer;padding:4px 6px;border-radius:7px;font-family:inherit"
                         onmouseenter="this.style.background='rgba(167,139,250,.15)'" onmouseleave="this.style.background='none'">
-                        <span style="color:#5b21b6;font-weight:500;font-size:13px">Sonnet 4.6</span>
+                        <span style="color:#5b21b6;font-weight:500;font-size:13px">무료 AI</span>
                         <svg viewBox="0 0 24 24" stroke="currentColor" style="width:13px;height:13px;fill:none;stroke-width:2;color:#a78bfa"><path d="m6 9 6 6 6-6"/></svg>
                       </button>
                       <button style="display:flex;align-items:center;background:none;border:none;cursor:pointer;padding:4px 2px;border-radius:7px"
@@ -1315,6 +1329,7 @@ body{display:flex;flex-direction:row;align-items:center;justify-content:center;
 
 
 
+<script src="/gmail-request-budget.js"></script>
 <script>
 // ─── GMAIL INTEGRATION — 백엔드(Next.js API route) 경유, refresh_token은 서버에만 저장 ───
 let _gmailConnected = false;
@@ -1335,8 +1350,72 @@ function _gmailShortDate(dateStr) {
   } catch (e) { return ''; }
 }
 
+const _gmailFolderCache = new Map();
+function _gmailReadFetch(url, options) { return window.ClaraGmailRead ? window.ClaraGmailRead(url, options) : fetch(url, options); }
+let _gmailCacheInvalidated = false;
+let _gmailFolderLoadedAt = 0;
+window.addEventListener('clara-source-changed', function(){ _gmailFolderCache.clear(); _gmailCacheInvalidated = true; window.ClaraMailboxStore?.clear(); });
+function _cacheGmailFolder() {
+  if (_gmailCacheInvalidated || !_gmailConnected || !EMAILS.length || _gmailFetching || _gmailLoadingMore) return;
+  const snapshot = { emails: EMAILS.slice(), cursor: _gmailNextPageToken, hasMore: _gmailHasMore, retry: _gmailRetryPage, time: _gmailFolderLoadedAt };
+  _gmailFolderCache.set(_gmailFolder, snapshot);
+  window.ClaraMailboxStore?.save(_gmailFolder, snapshot);
+}
 let _gmailNextPageToken = null;
 let _gmailLoadingMore = false;
+let _gmailHasMore = false;
+let _gmailRetryPage = false;
+let _gmailRetryTimer = null;
+let _gmailLastError = '';
+let _gmailFolder = 'inbox';
+let _gmailFolderGeneration = 0;
+let _gmailFetching = false;
+let _gmailAbortController = null;
+const _gmailFolderNames = { inbox:'받은편지함', starred:'별표편지함', snoozed:'다시 알림 항목', important:'중요편지함', sent:'보낸편지함', drafts:'임시보관함', purchases:'구매', social:'소셜', updates:'업데이트', forums:'포럼', promotions:'프로모션', all:'전체메일', spam:'스팸함', deleted:'휴지통', primary:'기본' };
+
+function _acceptGmailPage(data) {
+  _gmailNextPageToken = data.nextPageToken || null;
+  _gmailRetryPage = !!data.retryPage;
+  _gmailHasMore = _gmailRetryPage || !!_gmailNextPageToken;
+  const existingIds = new Set(EMAILS.map(e => e.id));
+  (data.emails || []).map(_mapGmailEmail).forEach(e => {
+    if (!existingIds.has(e.id)) { EMAILS.push(e); existingIds.add(e.id); }
+    if (e.starred) starredIds.add(e.id); else starredIds.delete(e.id);
+  });
+  _gmailLastError = _gmailRetryPage ? '일부 메일을 불러오지 못해 자동으로 다시 시도합니다.' : '';
+  _gmailScrollCooldownUntil = _gmailRetryPage ? Date.now() + (data.retryAfterMs || 5000) : 0;
+  if (_gmailRetryPage) _scheduleGmailRetry();
+  else if (_gmailRetryTimer) { clearTimeout(_gmailRetryTimer); _gmailRetryTimer = null; }
+}
+
+function _scheduleGmailRetry() {
+  if (_gmailRetryTimer) clearTimeout(_gmailRetryTimer);
+  _gmailRetryTimer = setTimeout(function() {
+    _gmailRetryTimer = null;
+    if (_gmailHasMore) _gmailLoadMore(true);
+  }, Math.max(0, _gmailScrollCooldownUntil - Date.now()) + 100);
+}
+
+function _renderGmailPagingFooter() {
+  const scrollEl = document.getElementById('el-scroll');
+  if (!scrollEl || !_gmailConnected) return;
+  document.getElementById('el-load-more-row')?.remove();
+  const row = document.createElement('div');
+  row.id = 'el-load-more-row';
+  row.style.cssText = 'padding:14px;text-align:center;color:var(--fg-s);font-size:12px';
+  const status = document.createElement('div');
+  status.setAttribute('role', 'status');
+  status.textContent = (_gmailFolderNames[_gmailFolder] || '') + ' · ' + EMAILS.length + '개 메일 · ' + (_gmailFetching ? (EMAILS.length ? '최신 메일 확인 중...' : '메일 불러오는 중...') : _gmailLoadingMore ? '이전 메일 불러오는 중...' : _gmailLastError || (_gmailHasMore ? '아래로 스크롤하면 더 불러옵니다.' : '모든 메일을 불러왔습니다.'));
+  row.appendChild(status);
+  if (_gmailHasMore && !_gmailLoadingMore) {
+    const button = document.createElement('button');
+    button.textContent = '이전 메일 더 보기';
+    button.style.cssText = 'margin-top:8px;padding:7px 14px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--primary);cursor:pointer;font-family:inherit';
+    button.onclick = function() { _gmailLoadMore(); };
+    row.appendChild(button);
+  }
+  scrollEl.appendChild(row);
+}
 
 function _mapGmailEmail(e) {
   return {
@@ -1347,10 +1426,10 @@ function _mapGmailEmail(e) {
     sender: e.sender, icon: _gmailIcon(e.sender),
     unread: e.unread, starred: e.starred,
     subject: e.subject, preview: e.preview,
-    date: _gmailShortDate(e.date), body: e.body,
+    date: _gmailShortDate(e.date), dateHeader: e.date || '', body: e.body || '', bodyLoaded: e.bodyLoaded !== false,
     bodyHtml: e.bodyHtml || null,
     original: e.sender + '\n\n' + e.body,
-    label: 'inbox', project: '받은편지함', pDesc: e.subject.slice(0, 50),
+    label: e.mailbox || _gmailFolder, labelIds: e.labelIds || [], project: _gmailFolderNames[e.mailbox || _gmailFolder] || '메일', pDesc: e.subject.slice(0, 50),
     attachments: (e.attachments || []).map(a => ({
       name: a.name, size: a.size, type: a.type,
       gmailId: e.id, attachmentId: a.attachmentId, mimeType: a.mimeType
@@ -1358,48 +1437,81 @@ function _mapGmailEmail(e) {
   };
 }
 
-async function _gmailFetchMessages() {
+async function _gmailFetchMessages(folder) {
+  _cacheGmailFolder();
+  let cached = _gmailFolderCache.get(folder || _gmailFolder);
+  const generation = ++_gmailFolderGeneration;
+  _gmailFolder = folder || _gmailFolder;
+  _gmailAbortController?.abort();
+  _gmailAbortController = new AbortController();
+  if (_gmailRetryTimer) { clearTimeout(_gmailRetryTimer); _gmailRetryTimer = null; }
+  _gmailFetching = true;
+  _gmailLoadingMore = false;
+  _gmailHasMore = false;
+  _gmailNextPageToken = null;
+  _gmailLastError = '';
+  // Startup calls this before the script has initialized EMAILS.
+  await Promise.resolve();
+  if (generation !== _gmailFolderGeneration) return;
+  const requestedFolder = _gmailFolder;
+  if (!cached && window.ClaraMailboxStore && !_gmailCacheInvalidated) cached = await window.ClaraMailboxStore.load(requestedFolder);
+  if (generation !== _gmailFolderGeneration) return;
+  if (cached?.sourceEmails) cached.emails = cached.sourceEmails.map(_mapGmailEmail);
+  EMAILS.length = 0;
+  if (cached) {
+    _gmailConnected = true; _gmailScrollCooldownUntil = 0;
+    EMAILS.push(...cached.emails);
+    _gmailFolderLoadedAt = cached.time;
+    _gmailNextPageToken = cached.cursor; _gmailHasMore = cached.hasMore; _gmailRetryPage = cached.retry;
+    renderList();
+    if (folder && Date.now() - cached.time < 60000 && !cached.retry) {
+      _gmailFetching = false; _setupEmailListInfiniteScroll(); _renderGmailPagingFooter(); return;
+    }
+  }
+  renderList();
   try {
     showToast('Gmail 메일 로딩 중...');
-    const res = await fetch('/api/gmail/messages', { credentials: 'same-origin' });
+    const res = await _gmailReadFetch('/api/gmail/messages?folder=' + encodeURIComponent(_gmailFolder), { credentials: 'same-origin', signal: _gmailAbortController.signal });
+    if (generation !== _gmailFolderGeneration) return;
     if (res.status === 401) { _gmailConnect(); return; }
     const data = await res.json().catch(() => ({}));
+    if (generation !== _gmailFolderGeneration) return;
     if (!res.ok) {
       if (data.error === 'quota_exceeded') {
-        showToast('⚠ Gmail 요청이 일시적으로 많아 잠시 제한됐습니다. 1분 후 자동으로 다시 시도합니다.');
-        setTimeout(_gmailFetchMessages, 60000);
+        if (!EMAILS.length) showToast('메일을 준비하고 있습니다. 자동으로 이어서 불러옵니다.');
+        _gmailLastError = 'Gmail 요청 제한으로 잠시 후 자동 재시도합니다.';
+        setTimeout(function(){ if (generation === _gmailFolderGeneration) _gmailFetchMessages(); }, Math.max(60000, data.retryAfterMs || 60000));
         return;
       }
       throw new Error('status ' + res.status);
     }
+    _gmailCacheInvalidated = false;
+    _gmailFolderLoadedAt = Date.now();
     const list = data.emails || [];
-    _gmailNextPageToken = data.nextPageToken || null;
-    if (!list.length) { showToast('받은편지함이 비어있습니다.'); _gmailConnected = true; _updateGmailBtn(); return; }
-
-    const newEmails = list.map(_mapGmailEmail);
     EMAILS.length = 0;
-    newEmails.forEach(e => EMAILS.push(e));
+    _gmailConnected = true;
+    _acceptGmailPage(data);
     renderList();
     _setupEmailListInfiniteScroll();
     selId = null;
     _gmailConnected = true;
     _updateGmailBtn();
-    showToast('✓ Gmail 연동 완료 — ' + newEmails.length + '개 메일');
-    if (data.quotaExceeded) {
-      showToast('⚠ Gmail 요청 한도로 일부 메일만 불러왔습니다. 스크롤하면 나중에 이어서 불러옵니다.');
-    } else {
-      setTimeout(_gmailPrefetchAll, 2000); // 초기 로드 직후 바로 또 몰아치지 않도록 약간의 텀을 둠
-    }
+    showToast(list.length ? '✓ Gmail 연동 완료 — ' + EMAILS.length + '개 메일' : _gmailRetryPage ? '메일을 다시 불러오는 중입니다.' : '받은편지함이 비어있습니다.');
+    if (!_gmailRetryPage && EMAILS.length < 30) _gmailPrefetchAll();
   } catch (err) {
+    if (generation !== _gmailFolderGeneration || err.name === 'AbortError') return;
     console.error('Gmail fetch error:', err);
     showToast('Gmail 로드 실패: ' + err.message);
+    _gmailLastError = '메일을 불러오지 못했습니다. 편지함을 다시 선택해 주세요.';
+  } finally {
+    if (generation === _gmailFolderGeneration) { _gmailFetching = false; _cacheGmailFolder(); _renderGmailPagingFooter(); }
   }
 }
 
 // 사용자가 스크롤로 체감하기 전에 조용히 미리 받아두는 백그라운드 프리페치 (적당한 선까지만 — 수천 통을 다 끌어오진 않음)
-const _GMAIL_PRELOAD_CAP = 40; // Gmail API 분당 할당량 보호를 위해 과도한 선제 로딩을 줄임
+const _GMAIL_PRELOAD_CAP = 30;
 async function _gmailPrefetchAll() {
-  while (_gmailNextPageToken && EMAILS.length < _GMAIL_PRELOAD_CAP) {
+  while (_gmailHasMore && EMAILS.length < _GMAIL_PRELOAD_CAP && Date.now() >= _gmailScrollCooldownUntil) {
     const ok = await _gmailLoadMore(true /* silent */);
     if (!ok) break; // 실패하면 무한 재시도 방지 위해 중단 (스크롤 시 다시 시도됨)
   }
@@ -1407,41 +1519,44 @@ async function _gmailPrefetchAll() {
 
 // 이전(더 오래된) 메일을 이어서 불러옴 — silent=true면 로딩 표시 없이 조용히(프리페치용)
 async function _gmailLoadMore(silent) {
-  if (_gmailLoadingMore || !_gmailNextPageToken) return;
+  const generation = _gmailFolderGeneration;
+  if (_gmailLoadingMore || !_gmailHasMore) return false;
+  if (Date.now() < _gmailScrollCooldownUntil) { _scheduleGmailRetry(); return false; }
   _gmailLoadingMore = true;
   const scrollEl = document.getElementById('el-scroll');
-  let loadingRow = null;
-  if (!silent) {
-    loadingRow = document.createElement('div');
-    loadingRow.id = 'el-load-more-row';
-    loadingRow.style.cssText = 'padding:14px;text-align:center;color:#9ca3af;font-size:12px';
-    loadingRow.textContent = '이전 메일 불러오는 중...';
-    if (scrollEl) scrollEl.appendChild(loadingRow);
-  }
+  _renderGmailPagingFooter();
   try {
-    const res = await fetch('/api/gmail/messages?pageToken=' + encodeURIComponent(_gmailNextPageToken), { credentials: 'same-origin' });
+    const params = new URLSearchParams();
+    params.set('folder', _gmailFolder);
+    if (_gmailNextPageToken) params.set('pageToken', _gmailNextPageToken);
+    if (_gmailRetryPage) params.set('loadedIds', EMAILS.slice(-30).map(e => e.gmailId).filter(Boolean).join(','));
+    const res = await _gmailReadFetch('/api/gmail/messages?' + params, { credentials: 'same-origin', signal: _gmailAbortController?.signal });
+    if (generation !== _gmailFolderGeneration) return false;
     if (!res.ok) {
       const errData = await res.json().catch(() => ({}));
-      if (errData.error === 'quota_exceeded') {
-        showToast('⚠ Gmail 요청 한도에 도달했습니다. 잠시 후 다시 스크롤해주세요.');
-        _gmailScrollCooldownUntil = Date.now() + 30000; // 할당량 초과 시 30초간 추가 요청 안 함
-      }
+      _gmailLastError = errData.error === 'quota_exceeded' ? 'Gmail 요청 제한으로 잠시 후 자동 재시도합니다.' : '메일 로딩에 실패했습니다. 다시 시도해 주세요.';
+      _gmailScrollCooldownUntil = Date.now() + (errData.error === 'quota_exceeded' ? Math.max(60000, errData.retryAfterMs || 60000) : 5000);
+      _scheduleGmailRetry();
       return false;
     }
     const data = await res.json();
-    const list = data.emails || [];
-    _gmailNextPageToken = data.nextPageToken || null;
-    const existingIds = new Set(EMAILS.map(e => e.id));
-    list.map(_mapGmailEmail).forEach(e => { if (!existingIds.has(e.id)) EMAILS.push(e); });
+    if (generation !== _gmailFolderGeneration) return false;
+    const savedScrollTop = scrollEl?.scrollTop || 0;
+    _acceptGmailPage(data);
     renderList();
+    if (scrollEl) scrollEl.scrollTop = savedScrollTop;
     return true;
   } catch (err) {
+    if (generation !== _gmailFolderGeneration || err.name === 'AbortError') return false;
     console.error('Gmail load-more error:', err);
+    _gmailLastError = '연결이 끊겼습니다. 다시 시도해 주세요.';
     return false;
   } finally {
+    if (generation !== _gmailFolderGeneration) return;
     _gmailLoadingMore = false;
-    const stuckRow = document.getElementById('el-load-more-row');
-    if (stuckRow) stuckRow.remove();
+    _cacheGmailFolder();
+    _renderGmailPagingFooter();
+    if (!_gmailRetryPage && _gmailHasMore && EMAILS.length < 30) setTimeout(_gmailPrefetchAll, 0);
   }
 }
 
@@ -1451,9 +1566,7 @@ function _setupEmailListInfiniteScroll() {
   if (!scrollEl || scrollEl.dataset.infiniteBound) return;
   scrollEl.dataset.infiniteBound = '1';
   scrollEl.addEventListener('scroll', function() {
-    if (Date.now() < _gmailScrollCooldownUntil) return; // 연속 호출로 인한 깜빡임 방지
     if (scrollEl.scrollTop + scrollEl.clientHeight > scrollEl.scrollHeight - 300) {
-      _gmailScrollCooldownUntil = Date.now() + 500;
       _gmailLoadMore();
     }
   });
@@ -1746,6 +1859,7 @@ async function _gmailAction(action, extra) {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) { showToast('실패: ' + (data.detail || data.error || res.status)); return null; }
+    window.dispatchEvent(new Event('clara-source-changed'));
     return e;
   } catch (err) {
     showToast('실패: ' + err.message);
@@ -1869,9 +1983,21 @@ function saveCurrentAsEml() {
   a.remove();
 }
 
-function bulkAction(action) {
+async function bulkAction(action) {
   const ids = getCheckedIds();
   if (!ids.length) { showToast('선택된 메일이 없습니다.'); return; }
+  const gmailAction = {delete:'trash',archive:'archive',read:'markRead'}[action];
+  if (gmailAction && ids.every(id => EMAILS.find(e => e.id === id)?.gmailId)) {
+    let completed = 0;
+    for (const id of ids) {
+      const response = await fetch('/api/gmail/action', {method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:gmailAction,gmailId:EMAILS.find(e=>e.id===id).gmailId})}).catch(()=>null);
+      if (response?.ok) completed++;
+    }
+    showToast(completed + '개 메일 변경 완료' + (completed < ids.length ? ' · 일부 메일은 다시 시도해 주세요.' : ''));
+    window.ClaraOntology?.sourceChanged?.();
+    await _gmailFetchMessages();
+    return;
+  }
   if (action === 'delete') {
     ids.forEach(id => { const e = EMAILS.find(x => x.id === id); if (e) e.label = 'deleted'; });
     if (ids.includes(selId)) {
@@ -1958,11 +2084,13 @@ function elTabSel(el, label) {
   if (matched) matched.classList.add('active');
   emailLabelFilter = sidebarTarget;
   activeFilters.label = sidebarTarget;
-  renderList();
+  fpSel(matched, label === 'primary' ? 'primary' : sidebarTarget);
+  el.classList.add('active');
 }
 
 // ─── AI 새 채팅: 어떤 상태에서도 AI 홈으로 ───
 function refreshAiMode() {
+  document.querySelector('.ed')?.classList.remove('ai-workspace','ai-mail-open');
   _resetPanelTransitionArtifacts(); _scheduleSidebarSync();
   // 1. inbox 페이지 강제 활성화 (ed-wrapper는 inbox 안에 있음)
   document.querySelectorAll('.page').forEach(function(p){ p.classList.remove('active','fade-in'); });
@@ -2168,6 +2296,7 @@ function _enterAiMode(fromCalendar) {
 
   var blankAiBar = document.getElementById('blank-ai-bar');
   var hasPrevSearch = !!document.getElementById('ba-msgs');
+  if (hasPrevSearch) document.querySelector('.ed')?.classList.add('ai-workspace');
   if (blankAiBar) {
     if (hasPrevSearch) {
       // 이전 검색 결과가 있으면 blank-ai-bar 숨기고 검색 화면 유지
@@ -2267,6 +2396,7 @@ function _enterAiMode(fromCalendar) {
 function _exitAiMode() {
   if (!_aiMode) return;
   _aiMode = false;
+  document.querySelector('.ed')?.classList.remove('ai-workspace');
   var myGen = ++_aiTransGen;
   _resetPanelTransitionArtifacts(); _scheduleSidebarSync();
   var mailView = document.getElementById('fp-mail-view');
@@ -2394,9 +2524,12 @@ function blankAiSearch(query) {
   edBlank.style.height = '100%';
   edBlank.style.width = '100%';
   edBlank.style.gap = '0';
+  document.querySelector('.ed').classList.add('ai-workspace');
+  document.querySelector('.ed').classList.remove('ai-mail-open');
 
   // ── 왼쪽: 대화 영역 ──
   var left = document.createElement('div');
+  left.id = 'ba-chat-panel';
   left.style.cssText = 'flex:1;display:flex;flex-direction:column;overflow:hidden;border-right:1px solid #f0f0f0;min-width:0';
   left.innerHTML = `
     <div id="ba-msgs" style="flex:1;overflow-y:auto;padding:24px 28px;display:flex;flex-direction:column;gap:16px"></div>
@@ -2413,7 +2546,7 @@ function blankAiSearch(query) {
               <svg viewBox="0 0 24 24" stroke="currentColor" style="width:13px;height:13px;fill:none;stroke-width:2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
             </button>
             <div style="display:flex;align-items:center;gap:6px">
-              <span style="color:#5b21b6;font-weight:500;font-size:12px">Sonnet 4.6</span>
+              <span style="color:#5b21b6;font-weight:500;font-size:12px">무료 AI</span>
               <svg viewBox="0 0 24 24" stroke="currentColor" style="width:12px;height:12px;fill:none;stroke-width:2;color:#a78bfa"><path d="m6 9 6 6 6-6"/></svg>
             </div>
           </div>
@@ -2423,6 +2556,7 @@ function blankAiSearch(query) {
 
   // ── 오른쪽: 소스 테이블 ──
   var right = document.createElement('div');
+  right.id = 'ba-source-panel';
   right.style.cssText = 'width:480px;min-width:480px;display:flex;flex-direction:column;overflow:hidden;background:#fafafa;border-left:1px solid #f0f0f0';
   right.innerHTML = `
     <div style="padding:8px 14px 6px;border-bottom:1px solid #e5e7eb;flex-shrink:0">
@@ -2474,9 +2608,10 @@ function blankAiSearch(query) {
 
     function onMove(ev) {
       var dx = startX - ev.clientX; // 왼쪽으로 드래그 → 우측 패널 넓어짐
-      var newW = Math.min(Math.max(startW + dx, 280), containerW - 300);
+      var newW = Math.min(Math.max(startW + dx, 200), containerW - 200);
       right.style.width = newW + 'px';
       right.style.minWidth = newW + 'px';
+      right.style.flexBasis = newW + 'px';
     }
     function onUp() {
       resizer._dragging = false;
@@ -2556,7 +2691,7 @@ async function _baAddAiMsg(query) {
   _baChatHistory.push({ role: 'user', content: query });
 
   try {
-    const res = await fetch('/api/chat', {
+    const res = await _claraChatFetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
@@ -2825,13 +2960,11 @@ function _renderSourceList(sources) {
   // sources = 이메일 배열 → 첨부파일 단위로 flatten
   var rows = [];
   sources.forEach(function(email) {
+    rows.push({ att: null, email: email });
     if (email.attachments && email.attachments.length) {
       email.attachments.forEach(function(att) {
         rows.push({ att: att, email: email });
       });
-    } else {
-      // 첨부 없는 이메일도 이메일 자체를 한 행으로
-      rows.push({ att: null, email: email });
     }
   });
 
@@ -2880,10 +3013,12 @@ function _renderSourceList(sources) {
       tr.style.cssText = 'border-bottom:1px solid #f0f0f0;transition:background .1s;cursor:pointer;vertical-align:top';
       tr.onmouseenter = function(){ this.style.background = '#f8f6ff'; };
       tr.onmouseleave = function(){ this.style.background = ''; };
-      // 행 클릭 → 항상 첨부파일 팝업
+      tr.dataset.mailId = email.id;
+      tr.classList.toggle('selected', email.id === selId && document.querySelector('.ed').classList.contains('ai-mail-open'));
+      // 메일은 기존 원문 상세 패널, 실제 첨부파일은 첨부 뷰어
       tr.onclick = (function(attObj, emailObj, dName, dType){
         return function(){
-          openAttachmentPopup(attObj, emailObj, dName, dType);
+          openAiSource(attObj, emailObj, dName, dType);
         };
       })(att, email, docName, docType);
 
@@ -2919,7 +3054,7 @@ function _renderSourceList(sources) {
         if (link) {
           link.onclick = function(e) {
             e.stopPropagation();
-            openAttachmentPopup(attObj, emailObj, dName, dType);
+            openAiSource(attObj, emailObj, dName, dType);
           };
         }
       })(att, email, docName, docType);
@@ -2931,6 +3066,14 @@ function _renderSourceList(sources) {
   });
 }
 
+
+function openAiSource(att, email, docName, docType) {
+  if (att) { openAttachmentPopup(att, email, docName, docType); return; }
+  openEmail(email.id);
+  document.querySelectorAll('#ba-source-list tr[data-mail-id]').forEach(function(row) {
+    row.classList.toggle('selected', row.dataset.mailId === String(email.id));
+  });
+}
 
 function openAttachmentPopup(att, email, docName, docType) {
   var existing = document.getElementById('att-viewer-modal');
@@ -3160,7 +3303,7 @@ function renderList() {
     const emailLabel = e.label || 'inbox';
     const lf = activeFilters.label;
     if (lf === 'all') { /* 전부 표시 */ }
-    else if (lf === 'primary') { if (!starredIds.has(e.id)) return false; }
+    else if (lf === 'starred') { if (!e.starred && !starredIds.has(e.id)) return false; }
     else if (lf !== emailLabel) return false;
     // 발신자 필터
     if (activeFilters.sender && !e.sender.toLowerCase().includes(activeFilters.sender.toLowerCase())) return false;
@@ -3170,7 +3313,7 @@ function renderList() {
     if (activeFilters.from || activeFilters.to) {
       // date 필드는 'MM/DD' 형식 → 현재 연도 기준 파싱
       const parseDate = (mmdd) => { const [m,d] = mmdd.split('/'); return new Date(2026, parseInt(m)-1, parseInt(d)); };
-      const eDate = parseDate(e.date);
+      const eDate = e.dateHeader ? new Date(e.dateHeader) : parseDate(e.date);
       if (activeFilters.from) { const fd = new Date(activeFilters.from); if (eDate < fd) return false; }
       if (activeFilters.to)   { const td = new Date(activeFilters.to);   if (eDate > td) return false; }
     }
@@ -3197,13 +3340,14 @@ function renderList() {
 
   if (sorted.length === 0) {
     const hasFilter = activeFilters.sender || activeFilters.attOnly || activeFilters.from || activeFilters.to || activeFilters.project;
-    const msg = q ? `"${emailSearchQuery}" 검색 결과 없음` : hasFilter ? '필터 조건에 맞는 메일이 없습니다' : '메일이 없습니다';
+    const msg = _gmailFetching ? '메일 불러오는 중...' : q ? `"${emailSearchQuery}" 검색 결과 없음` : hasFilter ? '필터 조건에 맞는 메일이 없습니다' : '메일이 없습니다';
     document.getElementById('el-scroll').innerHTML = `
       <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:200px;gap:8px;color:var(--fg-s)">
         <svg viewBox="0 0 24 24" stroke="currentColor" style="width:32px;height:32px;opacity:.3"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
         <div style="font-size:13px">${msg}</div>
         ${hasFilter ? '<button onclick="clearFilters();renderList()" style="font-size:12px;color:var(--primary);background:none;border:none;cursor:pointer;text-decoration:underline">필터 초기화</button>' : ''}
       </div>`;
+    _renderGmailPagingFooter();
     return;
   }
 
@@ -3239,12 +3383,14 @@ function renderList() {
       </div>
     </div>`;
   }).join('');
+  _renderGmailPagingFooter();
 }
 
 // 실제 HTML 이메일은 sandboxed iframe에 렌더링 (Gmail과 동일한 방식 — 메일 CSS가 앱에 새지 않도록 격리)
 function renderEmailBody(e) {
   const container = document.getElementById('ed-original-content');
   container.innerHTML = '';
+  if (e.bodyLoaded === false) { container.textContent = '메일 본문을 불러오는 중...'; return; }
   if (e.bodyHtml) {
     const iframe = document.createElement('iframe');
     // allow-same-origin: 부모가 iframe 내부 높이를 측정하기 위해 필요 (allow-scripts는 안 줌 → 메일 속 스크립트는 절대 실행 안 됨, 안전)
@@ -3282,6 +3428,52 @@ function renderEmailBody(e) {
   }
 }
 
+function renderMailMetadata(e) {
+  const from = e.senderEmail
+    ? (e.sender && e.sender !== e.senderEmail ? e.sender + ' <' + e.senderEmail + '>' : e.senderEmail)
+    : (e.sender || '정보 없음');
+  const to = e.toHeader || '수신자 헤더 없음';
+  const date = e.dateHeader || '날짜 헤더 없음';
+  document.getElementById('mp-from').textContent = from;
+  document.getElementById('mp-to').textContent = to;
+  document.getElementById('mp-cc').textContent = e.ccHeader || '';
+  document.getElementById('mp-cc-row').hidden = !e.ccHeader;
+  document.getElementById('mp-date').textContent = date;
+  document.getElementById('mp-subj').textContent = e.subject;
+  document.getElementById('mp-domain').textContent = (e.senderEmail || '').includes('@') ? e.senderEmail.split('@').pop() : '정보 없음';
+  document.getElementById('to-me-btn').textContent = '받는 사람: ' + to + ' ▾';
+  document.getElementById('g-date').textContent = e.date || '';
+  document.getElementById('g-date').title = date;
+}
+
+async function _loadGmailBody(e) {
+  _loadGmailBody.pending ||= new Map();
+  if (_loadGmailBody.pending.has(e.gmailId)) return _loadGmailBody.pending.get(e.gmailId);
+  const job = (async () => {
+    try {
+      const url = '/api/gmail/messages?id=' + encodeURIComponent(e.gmailId);
+      const options = { credentials: 'same-origin' };
+      const response = window.ClaraGmailRead ? await window.ClaraGmailRead(url, options, 20) : await fetch(url, options);
+      const data = await response.json();
+      if (!response.ok || !data.emails?.[0] || data.emails[0].id !== e.gmailId) throw new Error('body_unavailable');
+      Object.assign(e, _mapGmailEmail(data.emails[0]), { label:e.label, project:e.project, unread:e.unread });
+      if (selId === e.id) {
+        renderEmailBody(e); renderMailMetadata(e); renderEmailAttachments(e);
+        document.getElementById('ed-body-text').textContent = e.body;
+      }
+      _cacheGmailFolder();
+    } catch {
+      if (selId === e.id) {
+        const container = document.getElementById('ed-original-content');
+        container.textContent = '본문을 불러오지 못했습니다. ';
+        const retry = document.createElement('button'); retry.textContent = '다시 불러오기';
+        retry.onclick = () => { renderEmailBody(e); void _loadGmailBody(e); }; container.appendChild(retry);
+      }
+    } finally { _loadGmailBody.pending.delete(e.gmailId); }
+  })();
+  _loadGmailBody.pending.set(e.gmailId, job); return job;
+}
+
 function openEmail(id) {
   selId = id;
   // ed-wrapper 표시
@@ -3301,19 +3493,15 @@ function openEmail(id) {
   const taskChips = document.getElementById('g-task-chips');
   if (taskChips) taskChips.innerHTML = '';
   document.getElementById('g-sender').textContent = e.sender;
-  document.getElementById('g-date').textContent = e.date + '/2026';
+  document.getElementById('g-date').textContent = e.date;
   document.getElementById('g-from-val') && (document.getElementById('g-from-val').textContent = e.sender);
-  document.getElementById('g-date-val') && (document.getElementById('g-date-val').textContent = e.date + '/2026');
+  document.getElementById('g-date-val') && (document.getElementById('g-date-val').textContent = e.dateHeader || '날짜 헤더 없음');
   document.getElementById('g-sub-val') && (document.getElementById('g-sub-val').textContent = e.subject);
   // 메타 팝오버 데이터 채우기
-  const domain = e.sender.includes('@') ? e.sender.split('@')[1] : 'gmail.com';
-  document.getElementById('mp-from').innerHTML = `<b>${e.sender}</b> &lt;heon1018@gmail.com&gt;`;
-  document.getElementById('mp-to').textContent = 'ceo@bigbangangels.com';
-  document.getElementById('mp-date').textContent = `2026. ${e.date.replace('/','. ')}. 오후 10:33`;
-  document.getElementById('mp-subj').textContent = e.subject;
-  document.getElementById('mp-domain').textContent = 'gmail.com';
+  renderMailMetadata(e);
   // 팝업 닫기
   document.getElementById('meta-popup').classList.remove('show');
+  document.getElementById('meta-popup').style.display = 'none';
   // 발신자 아바타 (이니셜 + 색상) — 목록과 동일하게 발신자 기준으로 일관된 색상
   const av = document.getElementById('g-av');
   av.textContent = _avatarInitial(e.sender);
@@ -3344,12 +3532,24 @@ function openEmail(id) {
       </div>
     </div>
     <div class="sg-hint"><svg viewBox="0 0 24 24" stroke="currentColor"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>프로젝트 연결 후 Tasks가 제안됩니다</div>`;
-  document.getElementById('ed-blank').style.display = 'none';
+  const aiReading = _aiMode && !!document.getElementById('ba-msgs');
+  document.querySelector('.ed').classList.toggle('ai-workspace', aiReading);
+  document.querySelector('.ed').classList.toggle('ai-mail-open', aiReading);
+  document.getElementById('ed-blank').style.display = aiReading ? 'flex' : 'none';
   const edView = document.getElementById('ed-view');
   edView.style.display = 'flex'; // 인라인 display:none 덮어쓰기
   edView.classList.add('show');
   edView.style.flex = '1';
   edView.style.opacity = '1';
+  renderEmailAttachments(e);
+  if (e.gmailId && e.bodyLoaded === false) void _loadGmailBody(e);
+  // 헤더 별표/플래그 상태 동기화
+  document.getElementById('btn-star')?.classList.toggle('starred', starredIds.has(id));
+  document.getElementById('btn-flag')?.classList.toggle('flagged', pinnedList.includes(id));
+  setTab('original');
+}
+
+function renderEmailAttachments(e) {
   // 첨부파일 렌더링
   const attSection = document.getElementById('att-section');
   const attChips = document.getElementById('att-chips');
@@ -3379,10 +3579,6 @@ function openEmail(id) {
     attSection.style.display = 'none';
     attChips.innerHTML = '';
   }
-  // 헤더 별표/플래그 상태 동기화
-  document.getElementById('btn-star')?.classList.toggle('starred', starredIds.has(id));
-  document.getElementById('btn-flag')?.classList.toggle('flagged', pinnedList.includes(id));
-  setTab('original');
 }
 
 function setTab(t) {
@@ -3413,7 +3609,11 @@ function fpSel(el, label) {
       if (m && m[1] === tabTarget) t.classList.add('active');
     });
   }
-  renderList();
+  document.getElementById('ed-view').style.display = 'none';
+  document.getElementById('ed-view').classList.remove('show');
+  document.getElementById('ed-blank').style.display = 'flex';
+  selId = null;
+  _gmailFetchMessages(label || 'inbox');
 }
 
 function closeAllPopups() {
@@ -3504,14 +3704,28 @@ function toggleStar() {
   if (selId !== null) listToggleStar(selId);
 }
 
-function listToggleStar(id) {
+async function listToggleStar(id) {
+  const email = EMAILS.find(e => e.id === id);
+  const wasStarred = starredIds.has(id);
   if (starredIds.has(id)) starredIds.delete(id);
   else starredIds.add(id);
+  if (email) email.starred = !wasStarred;
   // 헤더 별표 버튼 상태 동기화 (현재 열린 메일인 경우)
   if (id === selId) {
     document.getElementById('btn-star')?.classList.toggle('starred', starredIds.has(id));
   }
   renderList();
+  if (email?.gmailId) {
+    try {
+      const response = await fetch('/api/gmail/action', { method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ action:wasStarred ? 'unstar' : 'star', gmailId:email.gmailId }) });
+      if (!response.ok) throw new Error('별표 변경 실패');
+      window.ClaraOntology?.sourceChanged?.();
+    } catch {
+      if (wasStarred) starredIds.add(id); else starredIds.delete(id);
+      email.starred = wasStarred;
+      renderList(); showToast('Gmail 별표 변경에 실패했습니다. 다시 시도해 주세요.');
+    }
+  }
 }
 
 // ─── 플래그 토글 ───
@@ -3553,6 +3767,8 @@ function toggleMetaPopup(e) {
     p.style.left = r.left + 'px';
     p.style.display = 'block';
     p.classList.add('show');
+    p.style.left = Math.max(12, Math.min(r.left, window.innerWidth - p.getBoundingClientRect().width - 12)) + 'px';
+    p.style.top = Math.max(12, Math.min(r.bottom + 4, window.innerHeight - p.getBoundingClientRect().height - 12)) + 'px';
     bringToFront(p);
     registerOutsideClick('meta-popup', ['#to-me-btn']);
   }
@@ -3614,7 +3830,7 @@ function clearFilters() {
     const m = (t.getAttribute('onclick') || '').match(/elTabSel\(this,'([^']+)'\)/);
     t.classList.toggle('active', m && m[1] === 'primary');
   });
-  renderList();
+  _gmailFetchMessages('inbox');
   _updateFilterBadge();
 }
 
@@ -3627,6 +3843,7 @@ function applyFilters() {
     if (m) label = m[1];
   }
   activeFilters.label   = label;
+  if (label === 'shopping') { label = 'purchases'; activeFilters.label = label; }
   emailLabelFilter      = label;
   activeFilters.sender  = (document.getElementById('fp-sender').value || '').trim();
   activeFilters.attOnly = document.getElementById('fp-att-only').checked;
@@ -3658,7 +3875,7 @@ function applyFilters() {
   }
 
   document.getElementById('el-filter-panel').classList.remove('open');
-  renderList();
+  _gmailFetchMessages(label);
   _updateFilterBadge();
 }
 
@@ -4773,7 +4990,7 @@ async function sendMsg(){
   loading=true; document.getElementById('send-btn').classList.remove('on');
   addMsg('ai','Clara가 생각하는 중...','typing');
   try{
-    const r=await fetch('/api/chat',{
+    const r=await _claraChatFetch('/api/chat',{
       method:'POST',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:1024,system:'You are Clara, an AI email and project assistant by Sprintsolo. Be concise and helpful. Respond in the same language as the user.',messages:msgs})
@@ -4940,7 +5157,7 @@ async function arSend() {
   const inp = document.getElementById('ar-input');
   const txt = inp.value.trim(); if(!txt) return;
 
-  arAddMsg('user', txt);
+  arAddMsg('user', escHtml(txt));
   inp.value = ''; arToggleSend();
   arLoading = true;
 
@@ -4957,7 +5174,7 @@ async function arSend() {
 
   arMsgs.push({role:'user',content:txt});
   try {
-    const r = await fetch('/api/chat',{
+    const r = await _claraChatFetch('/api/chat',{
       method:'POST',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:1024,system:ctx,messages:arMsgs})
@@ -4965,9 +5182,9 @@ async function arSend() {
     if(!r.ok){const er=await r.json().catch(()=>({}));throw new Error(er.error?.message||'HTTP '+r.status);}
     const dd=await r.json();const rep=dd.content?.[0]?.text||'응답 없음';
     arMsgs.push({role:'assistant',content:rep});
-    document.getElementById('ar-typing').innerHTML = rep.replace(/\n/g,'<br>');
+    document.getElementById('ar-typing').innerHTML = escHtml(rep).replace(/\n/g,'<br>');
   } catch(e) {
-    document.getElementById('ar-typing').innerHTML = `<span style="color:#dc2626">${e.message}</span>`;
+    document.getElementById('ar-typing').innerHTML = `<span style="color:#dc2626">${escHtml(e.message)}</span>`;
     arMsgs.pop();
   } finally {
     arLoading = false;
@@ -5189,13 +5406,13 @@ async function cpSend(){
   let sys='You are Clara, an AI email and project assistant by Sprintsolo. Be concise, helpful, and friendly. Respond in Korean unless asked otherwise.';
   if(selId){const e=EMAILS.find(x=>x.id===selId);if(e)sys+=`\n\n현재 열린 이메일:\n발신자: ${e.sender}\n제목: ${e.subject}\n본문: ${e.original||e.body}`;}
   try{
-    const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:1024,system:sys,messages:cpMsgs})});
+    const r=await _claraChatFetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:1024,system:sys,messages:cpMsgs})});
     if(!r.ok){const er=await r.json().catch(()=>({}));throw new Error(er.error?.message||'HTTP '+r.status);}
     const dd=await r.json();const rep=dd.content?.[0]?.text||'응답을 받지 못했어요.';
     cpMsgs.push({role:'assistant',content:rep});
-    document.getElementById('cp-typing-el').querySelector('.cp-bubble').innerHTML=rep.replace(/\n/g,'<br>');
+    document.getElementById('cp-typing-el').querySelector('.cp-bubble').innerHTML=escHtml(rep).replace(/\n/g,'<br>');
   }catch(e){
-    document.getElementById('cp-typing-el').querySelector('.cp-bubble').innerHTML=`<span style="color:#dc2626">${e.message.includes('401')?'API 키를 확인해주세요.':e.message}</span>`;
+    document.getElementById('cp-typing-el').querySelector('.cp-bubble').innerHTML=`<span style="color:#dc2626">${escHtml(e.message)}</span>`;
     cpMsgs.pop();
   }finally{cpLoading=false;cpToggleSend();document.getElementById('cp-msgs').scrollTop=99999;}
 }
@@ -5414,7 +5631,7 @@ function createClaraPanel(emailId) {
           <svg viewBox="0 0 24 24" stroke="currentColor" style="width:15px;height:15px;fill:none;stroke-width:2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
         </button>
         <div style="display:flex;align-items:center;gap:8px">
-          <span style="color:#5b21b6;font-weight:500;font-size:13px">Sonnet 4.6</span>
+          <span style="color:#5b21b6;font-weight:500;font-size:13px">무료 AI</span>
           <svg viewBox="0 0 24 24" stroke="currentColor" style="width:13px;height:13px;fill:none;stroke-width:2;color:#a78bfa"><path d="m6 9 6 6 6-6"/></svg>
           <button style="display:flex;align-items:center;background:none;border:none;cursor:pointer;padding:2px" onmouseenter="this.style.background='rgba(167,139,250,.15)'" onmouseleave="this.style.background='none'">
             <svg viewBox="0 0 24 24" stroke="currentColor" style="width:18px;height:18px;fill:none;stroke-width:2;color:#a78bfa"><line x1="4" y1="9" x2="4" y2="15"/><line x1="8" y1="6" x2="8" y2="18"/><line x1="12" y1="4" x2="12" y2="20"/><line x1="16" y1="7" x2="16" y2="17"/><line x1="20" y1="10" x2="20" y2="14"/></svg>
@@ -5539,7 +5756,7 @@ function openChatPanel() {
           <svg viewBox="0 0 24 24" stroke="currentColor" style="width:15px;height:15px;fill:none;stroke-width:2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
         </button>
         <div style="display:flex;align-items:center;gap:8px">
-          <span style="color:#5b21b6;font-weight:500;font-size:13px">Sonnet 4.6</span>
+          <span style="color:#5b21b6;font-weight:500;font-size:13px">무료 AI</span>
           <svg viewBox="0 0 24 24" stroke="currentColor" style="width:13px;height:13px;fill:none;stroke-width:2;color:#a78bfa"><path d="m6 9 6 6 6-6"/></svg>
           <button style="display:flex;align-items:center;background:none;border:none;cursor:pointer;padding:2px" onmouseenter="this.style.background='rgba(167,139,250,.15)'" onmouseleave="this.style.background='none'">
             <svg viewBox="0 0 24 24" stroke="currentColor" style="width:18px;height:18px;fill:none;stroke-width:2;color:#a78bfa"><line x1="4" y1="9" x2="4" y2="15"/><line x1="8" y1="6" x2="8" y2="18"/><line x1="12" y1="4" x2="12" y2="20"/><line x1="16" y1="7" x2="16" y2="17"/><line x1="20" y1="10" x2="20" y2="14"/></svg>
@@ -5616,7 +5833,7 @@ async function cpSendInt() {
   // 사용자 메시지
   const userEl = document.createElement('div');
   userEl.className = 'cp-msg cp-user';
-  userEl.innerHTML = `<div class="cp-msg-body"><div class="cp-bubble">${txt}</div></div>`;
+  userEl.innerHTML = `<div class="cp-msg-body"><div class="cp-bubble">${escHtml(txt)}</div></div>`;
   msgs.appendChild(userEl);
   msgs.scrollTop = 99999;
 
@@ -5635,7 +5852,7 @@ async function cpSendInt() {
       ? `You are Clara, an AI email assistant. The user is viewing an email from ${email.sender} with subject: "${email.subject}". Body: ${email.body || email.original || ''}. Help the user manage this email. Respond in Korean.`
       : 'You are Clara, an AI email assistant. Help the user manage their emails. Respond in Korean.';
 
-    const res = await fetch('/api/chat', {
+    const res = await _claraChatFetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 1024, system: systemPrompt, messages: [{ role: 'user', content: txt }] })
@@ -5646,9 +5863,9 @@ async function cpSendInt() {
     }
     const data = await res.json();
     const reply = (data.content||[]).map(c => c.text || '').join('') || '죄송합니다, 응답을 받지 못했습니다.';
-    typingEl.querySelector('.cp-bubble').innerHTML = reply.replace(/\n/g,'<br>');
+    typingEl.querySelector('.cp-bubble').innerHTML = escHtml(reply).replace(/\n/g,'<br>');
   } catch(e) {
-    typingEl.querySelector('.cp-bubble').innerHTML = '<span style="color:#dc2626;font-size:12px">오류: ' + (e.message || e) + '</span>';
+    typingEl.querySelector('.cp-bubble').innerHTML = '<span style="color:#dc2626;font-size:12px">오류: ' + escHtml(String(e.message || e)) + '</span>';
   } finally {
     cpIntLoading = false;
     msgs.scrollTop = 99999;
@@ -5741,7 +5958,7 @@ async function cpSendPanel(panelId) {
   // 사용자 메시지
   const userDiv = document.createElement('div');
   userDiv.className = 'cp-msg cp-user';
-  userDiv.innerHTML = `<div class="cp-bubble cp-user-bubble">${txt}</div>`;
+  userDiv.innerHTML = `<div class="cp-bubble cp-user-bubble">${escHtml(txt)}</div>`;
   msgs_el.appendChild(userDiv);
   msgs_el.scrollTop = 99999;
 
@@ -5758,7 +5975,7 @@ async function cpSendPanel(panelId) {
   try {
     const email = info.emailId ? EMAILS.find(x => x.id === info.emailId) : null;
     let ctx = email ? `\n\n현재 이메일: [${email.sender}] ${email.subject}\n${(email.original||email.body||'').slice(0,500)}` : '';
-    const res = await fetch('/api/chat', {
+    const res = await _claraChatFetch('/api/chat', {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({
         model:'claude-sonnet-4-20250514', max_tokens:1000,
@@ -5768,9 +5985,9 @@ async function cpSendPanel(panelId) {
     });
     const data = await res.json();
     const reply = data.content?.[0]?.text || '응답을 받지 못했습니다.';
-    aiDiv.querySelector('.cp-bubble').innerHTML = reply.replace(/\n/g,'<br>');
+    aiDiv.querySelector('.cp-bubble').innerHTML = escHtml(reply).replace(/\n/g,'<br>');
   } catch(e) {
-    aiDiv.querySelector('.cp-bubble').innerHTML = `<span style="color:#dc2626">${e.message}</span>`;
+    aiDiv.querySelector('.cp-bubble').innerHTML = `<span style="color:#dc2626">${escHtml(e.message)}</span>`;
   }
   msgs_el.scrollTop = 99999;
 }
@@ -5983,6 +6200,7 @@ async function sendInlineCompose() {
       showToast('전송 실패: ' + (data.detail || data.error || res.status));
       return;
     }
+    window.dispatchEvent(new Event('clara-source-changed'));
     closeInlineCompose();
     const t = document.getElementById('send-toast');
     if (t) { t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 3000); }
@@ -6391,7 +6609,7 @@ async function toggleCpMicInt() {
       (data.events || []).forEach(function(e) {
         var cal = _calCalendars.find(function(c){ return c.id === e.calendarId; });
         CAL_EVENTS.push({
-          id: e.id, calendarId: e.calendarId,
+          id: e.id, calendarId: e.calendarId, recurringEventId: e.recurringEventId,
           date: e.date, endDate: e.endDate || e.date, title: e.title,
           allDay: !!e.allDay,
           startMin: e.startMin, endMin: e.endMin,
@@ -6593,8 +6811,9 @@ async function toggleCpMicInt() {
         </div>
         ${ev.loc ? `<div class="cal-ep-row"><svg viewBox="0 0 24 24" stroke="currentColor"><path d="M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0"/><circle cx="12" cy="10" r="3"/></svg><span class="cal-ep-text">${ev.loc}</span></div>` : ''}
         ${ev.detail ? `<div class="cal-ep-row"><svg viewBox="0 0 24 24" stroke="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><span class="cal-ep-text">${ev.detail}</span></div>` : ''}
-        <div><span class="cal-ep-tag" style="background:${color}">${ev.type.charAt(0).toUpperCase()+ev.type.slice(1)}</span></div>
+        <div><span class="cal-ep-tag" style="background:${color}">${escHtml((ev.type || 'meeting').charAt(0).toUpperCase()+(ev.type || 'meeting').slice(1))}</span></div>
       </div>`;
+
 
     popup.classList.remove('show');
     document.body.appendChild(popup);
@@ -7128,6 +7347,7 @@ async function toggleCpMicInt() {
       })
     }).then(function(res) {
       if (!res.ok) { showToast('⚠ 캘린더 저장 실패 — 화면에만 임시로 표시됩니다.'); return; }
+      window.dispatchEvent(new Event('clara-source-changed'));
       _calFetchEvents(); // 서버 데이터로 다시 동기화
     }).catch(function() { showToast('⚠ 캘린더 저장 실패 — 화면에만 임시로 표시됩니다.'); });
 
@@ -7252,9 +7472,10 @@ async function toggleCpMicInt() {
 <div class="meta-popup" id="meta-popup" style="position:fixed;display:none" onmousedown="event.stopPropagation()">
   <div class="meta-popup-row"><span class="meta-popup-label">보낸사람:</span><span class="meta-popup-val" id="mp-from"></span></div>
   <div class="meta-popup-row"><span class="meta-popup-label">받는 사람:</span><span class="meta-popup-val" id="mp-to"></span></div>
+  <div class="meta-popup-row" id="mp-cc-row" hidden><span class="meta-popup-label">참조:</span><span class="meta-popup-val" id="mp-cc"></span></div>
   <div class="meta-popup-row"><span class="meta-popup-label">날짜:</span><span class="meta-popup-val" id="mp-date"></span></div>
   <div class="meta-popup-row"><span class="meta-popup-label">제목:</span><span class="meta-popup-val" id="mp-subj"></span></div>
-  <div class="meta-popup-row"><span class="meta-popup-label">발송 도메인:</span><span class="meta-popup-val" id="mp-domain"></span></div>
+  <div class="meta-popup-row"><span class="meta-popup-label">보낸 주소 도메인:</span><span class="meta-popup-val" id="mp-domain"></span></div>
 </div>
 
 
@@ -7820,5 +8041,7 @@ async function toggleCpMicInt() {
   });
 })();
 </script>
+<script src="/ontology-bridge.js"></script>
+<script type="module" src="/ontology-client.mjs"></script>
 </body>
 </html>
